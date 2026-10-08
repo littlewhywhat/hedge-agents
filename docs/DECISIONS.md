@@ -139,6 +139,8 @@ Weights after a score:
 
 The demo cadence is 30 minutes, and only after a minimum number of valuation snapshots so the first hour does not churn. A slower cadence uses the 10 point step. Section 6 of PLAN.md is this rule, not the earlier 10-point-and-two-round version.
 
+The one-minute pitch plays this same rule on a paper tape, including one scripted headline that enters the daily-loss path. It does not add a meeting in which agents set weights. The tape is specified under Demo replay below and in section 15 of the architecture.
+
 ## D8 — Agent stack
 
 **Corrected.** Python stays. `pip install masumi` (1.2.0) is a FastAPI shell for MIP-003 (`create_masumi_app`, `MasumiAgentServer`) and a thin client (`Payment` for selling, `Purchase` for buying). It is not the Cardano wallet, not the registry client, and not x402. Buyer support exists (`Purchase.create_purchase_request` posts to `/purchase/`) but the deadlines are the 12h/24h defaults above.
@@ -187,6 +189,24 @@ Price v3 also returns `stockData.price` for xStocks. Premium versus the underlyi
 
 **Added, out of scope.** The marketplace can list a registered agent. Agent-to-agent payments in this system do not go through it. We do not block the build on a listing.
 
+### Demo replay, then the live fund
+
+**Added.** The stage pitch is one minute. The fund is long-running: allocation rounds are 30 minutes, an x402 send is one Cardano block, and a fee escrow unlocks in about 45 minutes. A few hours of live returns are noise. Squashing two or three months of mainnet fills into 60 seconds is not possible, and those fills do not exist yet. The pitch still has to show weights moving, profit moving, a history that matches those numbers, and one news shock that forces an emergency round.
+
+What we will not do:
+
+- Play live chain time faster. Cardano and Solana do not confirm months of transactions in a minute.
+- Treat a Binance backtest as Masumi history. Paper trades must not be written into `events` or into a `report` job. A judge who recomputes `result_hash` would be checking fills that never settled.
+- Seed the live book with the replay profit. After the switch, live history starts at the first real deposit. An empty live fund shows the empty state.
+- Let the shock be a strategy meeting. D7 still holds. Agents do not leave the round with weights the formula did not compute.
+
+**Rule.** Two modes, one UI, two ledgers. Section 15 of the architecture is the build spec.
+
+- **Replay.** An offline run of the fund runtime, chain clients stubbed, over about 2–3 months of bars. BTC and ETH are Binance public spot klines (`BTCUSDT`, `ETHUSDT`, 30-minute). The stock sleeve uses a free daily S&P 500 OHLC series. Binance has no spot S&P. The sim steps the real score, caps, buffer, and limits, and stores every paper trade. Profile value at a frame recomputes from that trade list and the bar at that time. Playback is about 60 seconds: about 8–12 allocation frames plus one shock, with the value interpolated between frames. The player does not recompute weights and does not call an LLM.
+- **Shock.** One headline is authored onto the tape. A free news aggregate is the wrong source for that sentence: it will not line up "a $50B BTC liquidation" or "a war started" with this window, and a $50B liquidation is not a historical print we should pretend we replayed. The headline starts the daily-loss path for the named agent: sell toward cash, block incoming budget. Objections are collected and applied only when code recomputes the same rule.
+- **Live.** The same pages call the live routes as soon as the operator switches. No redeploy. Jupiter stays the mark and the fill. Masumi stays the payment rail. Binance klines, the S&P series, and a free headline feed update in the background and may change conviction on a later tick. A headline mapped to the emergency tag is the only way news starts an allocation round, and it starts the daily-loss path, not a new weight. Gold stays in the live fund. Gold is absent from the tape because we do not have a matching free series in this pass.
+- **PLAN.md section 10** stays the live walkthrough (deposit, x402, explorer links, chat cap). It is what we show when someone asks for a real transaction. It is not the one-minute pitch.
+
 ## Inconsistencies the rules above close
 
 These are the places PLAN.md disagreed with itself or with the protocol. They are recorded here so a later edit does not reintroduce them.
@@ -204,7 +224,8 @@ These are the places PLAN.md disagreed with itself or with the protocol. They ar
 11. **SDK registration of agents was implied.** `pip-masumi` cannot register. Registration is `POST /registry` on the Payment Service (or the admin UI). The selling wallet needs ADA and, on V2, a collateral UTxO of at least 5 ADA. `apiBaseUrl` is not probed at registration time. Buyers and the registry indexer do call it, so a judge who opens the registry from outside needs a tunnel. Our own agents call each other on the Docker network either way.
 12. **UTxO contention was omitted.** One hot wallet, one in-flight Cardano transaction. A second send built on a stale UTxO fails. Allocation sends are serialized per wallet. Wallets can be pre-split into several UTxOs so a later tick is not stuck behind a single output.
 13. **Stocks were blocked on a paid fundamentals API.** The v2 personas need filings, not a price. Our stocks trader uses the same price, volatility, and drawdown loop as the others, plus an optional headline. No Financial Datasets key.
+14. **The one-minute pitch was going to be sped-up live trading.** PLAN.md section 10 is a live walkthrough of about three minutes, and it cannot show months of allocation. The pitch is a paper replay of the allocator. The live walkthrough stays for a real transaction. Replay rows do not enter the hash chain.
 
 ## What we will not revisit during the hackathon
 
-Hydra, Sokosumi, a live xReserve hop inside a trade, V1 contracts, USDM (Masumi's previous mainnet stablecoin), Wanchain, shorting, and a multi-user auth model. If a demo-day failure forces the D3 fallback, we use `transfer-funds` and label it honestly.
+Hydra, Sokosumi, a live xReserve hop inside a trade, V1 contracts, USDM (Masumi's previous mainnet stablecoin), Wanchain, shorting, a multi-user auth model, and an agent meeting that sets weights. If a demo-day failure forces the D3 fallback, we use `transfer-funds` and label it honestly.

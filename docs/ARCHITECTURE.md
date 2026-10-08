@@ -2,7 +2,7 @@
 
 The whole system, not only the agents. Decisions and the evidence for them are in [DECISIONS.md](DECISIONS.md). This document is the build spec. Nothing here is implemented yet.
 
-One operator runs one fund. Four trader agents each hold one market (gold, stocks, ETH, BTC). A gateway agent the operator also runs is the inventory between Cardano and Solana. Agent-to-agent budget moves are Cardano x402 payments on Masumi's rails. Service fees and reports are Masumi escrow jobs. Swaps happen on Solana through Jupiter. A web app shows value, fees, and an audit trail, and accepts policy changes that take effect on the next round.
+One operator runs one fund. Four trader agents each hold one market (gold, stocks, ETH, BTC). A gateway agent the operator also runs is the inventory between Cardano and Solana. Agent-to-agent budget moves are Cardano x402 payments on Masumi's rails. Service fees and reports are Masumi escrow jobs. Swaps happen on Solana through Jupiter. A web app shows value, fees, and an audit trail, and accepts policy changes that take effect on the next round. The one-minute pitch plays a paper replay of two to three months. The same pages then read the live fund. Section 15.
 
 ## 1. What is in and out
 
@@ -13,6 +13,7 @@ In:
 - Long-only spot. Buy the allowlisted token with USDC, sell it back to USDC.
 - A hash-chained event log whose head is written into a Masumi job result.
 - Hard limits in code, a kill switch, and fees broken out so a short demo does not pretend to be an edge.
+- A one-minute replay: BTC, ETH, and the S&P 500, paper trades only, then a switch onto the live fund.
 
 Out:
 
@@ -21,6 +22,8 @@ Out:
 - Hydra. Masumi can run a 2-party head. We will not host one for the hackathon.
 - A live bridge inside a trade. Inventory is funded before the demo.
 - Importing `ai-hedge-fund`. We copy the shape of its ledger and its clamp events.
+- Replay rows in the Masumi audit, or a replay profit copied in as a live deposit.
+- An agent meeting that sets weights. A news shock runs the daily-loss rule. It does not negotiate a new strategy.
 
 The paper's useful slice is the shape: specialists, a manager who is not one of them, a periodic budget conference, and an emergency de-risk. The experience-sharing conference and the options hedge are not in this build.
 
@@ -238,7 +241,7 @@ A tick, for one agent, in order:
 
 1. Read the kill switch and the current policy. Stop if trading is halted or this agent is paused.
 2. Read the last prices from `prices` and the agent's balances from chain (the monitor's sampler is the usual source; the trader re-reads Solana itself before signing).
-3. Build a view. The LLM sees the candle summary, the position, the policy, and an optional headline. It returns `conviction` in `[-1, 1]` and a short `reasoning`. Any parse failure, timeout, or exception becomes a hold: conviction 0, `abstained: true`. A failure never becomes a trade.
+3. Build a view. The LLM sees the candle summary, the position, the policy, and an optional headline. It returns `conviction` in `[-1, 1]` and a short `reasoning`. Any parse failure, timeout, or exception becomes a hold: conviction 0, `abstained: true`. A failure never becomes a trade. The candle summary for the mark is `prices`. Binance BTC and ETH klines, an S&P series, and a headline feed may sit beside that view. They are specified in section 15. They are not the mark and they are not a fill.
 4. Map conviction to a target fraction of the agent's value in the token: `clamp(base + k * conviction, 0, max_token_pct)`. Policy can lower `max_token_pct` and `k`. It cannot raise them above the code caps.
 5. Diff target against the current token value. If the difference is under the minimum trade size, do nothing.
 6. Run the limits in section 9. Any failure logs a clamp or a reject and does not sign.
@@ -285,7 +288,7 @@ Objections are collected over HTTP from each trader before the projection is fin
 
 `rule_breach` is applied only if the runtime recomputes the same breach. `comment` is stored and does not change weights. An objection has no field for a proposed weight. That is deliberate.
 
-Daily-loss stop: if an agent's value is down more than `daily_loss_pct` versus the snapshot at the UTC day boundary, the runtime sets that agent's target token fraction to the policy minimum (cash), excludes it from receiving budget, and the trader's own check will refuse new buys. This is the extreme-market conference we can actually run. It does not buy puts.
+Daily-loss stop: if an agent's value is down more than `daily_loss_pct` versus the snapshot at the UTC day boundary, the runtime sets that agent's target token fraction to the policy minimum (cash), excludes it from receiving budget, and the trader's own check will refuse new buys. This is the extreme-market conference we can actually run. It does not buy puts. A headline the code maps to the emergency tag enters this same path. The tag names the agent and the rule. It does not name a weight. The one-minute pitch replays this path from a scripted headline. Section 15.
 
 The user's policy (section 10) can set a tighter cap per agent, pause an agent (weight frozen, no buys), or lower `k` and `max_token_pct`. It cannot set a cap above 50% or a floor under 10%, and it cannot disable the daily-loss stop.
 
@@ -352,6 +355,8 @@ Postgres is the record of decisions. Cardano and Solana are the record of money.
 
 `events` — append only. Columns: id, time, kind, payload JSON, prev_hash, hash. `hash` is `sha256` of the canonical JSON of the row excluding `hash`. `prev_hash` is the previous row's hash, or 64 zeros for the first. The insert runs in a transaction that locks the tail. If `prev_hash` does not match the current tail, the insert fails. Updates and deletes are revoked from the application role.
 
+`replay_frames`, `replay_trades`, `replay_headlines` — the paper tape in section 15. Same numbers the profile shows (weights, value, profit, fees) and one row per paper trade. Simulated timestamps only. No chain tx id. These tables are not inserted into `events`.
+
 The runtime anchors by asking a trader to sell a `report` whose output string contains `audit_head` equal to the current `events` hash. The on-chain `result_hash` is then a commitment to that string. The audit page stores the job id next to the head it covered. A judge recomputes the hash from `/status` and checks it against the datum, or against the payment-service record of the submitted hash.
 
 ### Sampler
@@ -376,7 +381,7 @@ For the fund and per agent:
 
 ### HTTP the web uses
 
-Reads, no token: `GET /fund`, `GET /agents`, `GET /snapshots`, `GET /events`, `GET /rounds`, `GET /inventory`, `GET /policy`.
+Reads, no token: `GET /fund`, `GET /agents`, `GET /snapshots`, `GET /events`, `GET /rounds`, `GET /inventory`, `GET /policy`. Replay reads, also no token, and not a union with the live routes: `GET /replay/frames`, `GET /replay/trades`, `GET /replay/headlines`.
 
 Writes, operator token: `POST /kill-switch`, `POST /policy/confirm`, `POST /chat`. Chat either returns an answer grounded in the rows above or a policy diff. Confirm is a second call. The first call does not store a policy.
 
@@ -395,6 +400,8 @@ Next.js, one app, polling the monitor every few seconds. No wallet connection on
 | Controls | Kill switch, gateway inventory, last anchor head. |
 
 Empty states are real screens: no deposit yet, no round yet, sampler stale. A stale sampler (no snapshot for several minutes) is a banner, not a frozen last number presented as live.
+
+The pitch and the live fund are the same pages. Replay shows a recording banner and hides explorer links. The operator switches once. The pages then call the live routes. The switch does not copy replay totals into the live book. If the live fund has no deposit yet, the profile shows that empty state.
 
 ## 12. Failure modes
 
@@ -415,7 +422,9 @@ Empty states are real screens: no deposit yet, no round yet, sampler stale. A st
 
 ## 13. Phases
 
-Cut order if time runs out: chat, then the dashed benchmark line, then the ETH and BTC agents. Gold, one xStock, the gateway, the profile, and the audit are the demo.
+Cut order if time runs out: chat, then the dashed benchmark line, then the ETH and BTC agents. Gold, one xStock, the gateway, the profile, and the audit are the live demo.
+
+The one-minute stage pitch is section 15. It can be built once the allocator runs offline on downloaded bars. It does not wait for a mainnet round trip. PLAN.md section 10 stays the live walkthrough, for when the room asks to see a real transaction.
 
 ### Phase 0 — wiring
 
@@ -455,3 +464,28 @@ Kill switch drilled once on mainnet with a tiny book. Gateway inventory topped u
 - Do not send swaps through the public Solana RPC. Helius free tier (about 1M credits per month, 10 requests per second) is enough for four agents if Jupiter `/execute` lands the swap and our RPC is only balances and ATA checks.
 - Blockfrost free tier is 50,000 requests per day and 10 per second. Preprod and mainnet are separate projects. The payment service and the monitor should share a paid key if both poll at 20 seconds across five wallets.
 - Pin `pycardano` only if some tool outside the payment service has to build a transaction. The normal send path is the facilitator or `transfer-funds`. If PyCardano is installed, pin `cbor2<6` or the import breaks on current `cbor2`.
+
+## 15. One-minute replay, then live
+
+The pitch is one minute. A live allocation round is thirty minutes, and a fee escrow unlocks in about forty-five. Two or three months of weights, profit, and one news shock cannot be shown by waiting on mainnet. The pitch plays a recording of the real allocator. The product behind the same pages is the live fund in the rest of this document.
+
+The live service can be up during the pitch. Switching is a change of which routes the pages call. It is not a redeploy, and it is not a migration.
+
+| | Replay | Live |
+|---|---|---|
+| Clock | About 60 seconds, covering 2–3 months of bars | Wall clock |
+| Sleeves on screen | BTC, ETH, S&P 500. Gold is not on the tape. | Gold, stocks, ETH, BTC |
+| Prices | Binance public spot klines, `BTCUSDT` and `ETHUSDT`, 30-minute bars, no key. A free daily OHLC series for the S&P 500. Binance has no spot S&P. If the stock series is daily, that sleeve holds the last daily return between prints. | Jupiter Price v3 is the mark and the fill. The Binance klines, the S&P series, and a headline feed are slow inputs beside the view in section 6. |
+| Money | Paper. The sim loads no chain key and does not call the facilitator, the payment service, or Jupiter `/execute`. | Sections 4–6 |
+| History | Every paper trade the sim wrote. Profile value, weights, and profit at a frame recompute from that trade list and the bar at that timestamp. | `events`, `trades`, `transfers`, explorer links |
+| Audit | Banner: this is a recording. No `events` row, no Masumi `report`. | Section 10 |
+
+**Building the tape.** A sim entry point of the fund runtime. It downloads the bars, steps the score, the caps, the buffer, and the limits from sections 7 and 9, and writes `replay_frames`, `replay_trades`, and `replay_headlines`. Conviction used at each sampled decision is stored on the trade. The player reads those rows. It does not call an LLM and it does not recompute weights while the clock runs. Rebuilding the tape is how the history stays equal to the chart. Hand-drawn frames are not a source.
+
+Simulated cadence is the demo cadence, thirty minutes. Playback keeps about eight to twelve allocation frames plus the shock frame, and interpolates profile value between them so the minute moves. The history list is the sim's full trade set. The animation does not invent extra trades.
+
+**The shock.** One headline is written onto the tape by us. A free news feed is not expected to contain a chosen sentence lined up with these bars, so the feed is not the source of the stage beat. The sentence can be a very large BTC liquidation or a conflict starting. It starts one emergency round, the daily-loss path: the named agent is sold toward cash and blocked from receiving budget. Each trader still returns an objection. Code applies it only when it recomputes the same rule. The frame shows the headline, the objections, and the weights before and after. No field on that frame is a proposed weight. The round does not end in a strategy the formula did not compute.
+
+**Live, after the switch.** Profile, chart, and history call the live routes. Live history starts at the first real deposit. Replay totals never become that deposit. Binance BTC and ETH klines, the S&P series, and a free headline feed keep updating in the background and can change conviction on a later tick. They cannot change the allowlist, the mark, or the venue. A headline mapped to the emergency tag trips the same daily-loss path as the tape. Any other headline is context on the decision row.
+
+Leaving replay does not delete the tape. The pitch can be played again. Entering live does not restart the payment service.
