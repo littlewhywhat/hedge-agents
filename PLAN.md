@@ -163,7 +163,7 @@ The user's deposit lands on one trader's Cardano address. The runtime does the f
 Each round, every 30 minutes in the demo, and only after at least an hour of snapshots. A slower cadence uses the tighter step below.
 
 1. **Inputs.** The runtime reads `value_snapshots`. A `report` job is how a round gets anchored on Masumi, not how the score is fetched.
-2. **Score.** Decayed recent return divided by volatility, with a volatility floor. Non-positive scores do not receive new budget. If every score is near zero, weights do not change.
+2. **Score.** Decayed recent return divided by volatility, with a volatility floor. Non-positive scores do not receive new budget. If every score is near zero, weights do not change. The one-minute pitch does not use this formula. It uses the handwritten series in section 12.
 3. **Weights.** Proportional to score, then projected onto:
    - Each agent stays between 10% and 50%.
    - No move under 5 points.
@@ -264,6 +264,20 @@ The minimum demo is phases 0–2 plus the profile and audit pages. Cut in this o
 3. The team chart: four lines, markers where budget moved. A marker shows the reason and the transfers.
 4. In chat, "cap BTC at 20%". Confirm the policy. The next round applies it.
 5. Net profit after fees, against buy-and-hold. A few hours of returns are mostly noise. The demo shows the mechanism, not an edge.
+
+## 12. One-minute pitch
+
+Section 10 is the live walkthrough. This section is the one-minute stage pitch. The fund cannot show two or three months of allocation by waiting, so the pitch plays a paper tape. Prices on that tape are the downloaded bars (Binance BTC and ETH, a free S&P series). The score is not computed from those bars.
+
+Each sleeve has a handwritten series of about 8–12 points, one point per frame, for example BTC `[0.80, 0.84, 0.87, 0.40]`. ETH and the S&P sleeve have their own series of the same length.
+
+- A small step, such as `0.80` to `0.84`, only moves budget through the weight rules in section 6.
+- A large drop is the shock. `0.87` to `0.40` is the example. The rule is a fall of more than `0.20` from the previous point. That agent sells toward cash and is blocked from receiving budget. The series is written so this happens once.
+- The other agents do not meet and do not propose a new strategy. Objections still have to name a rule the code can recompute.
+
+The runtime runs those rules on the series and stores the paper trades. The profile adds the trades to the price bars, so the history matches the chart. The player reads the stored rows. It does not recompute the score while the clock runs.
+
+The series is replay-only. After the switch, live rounds use the return-over-volatility score in section 6. The handwritten `0.40` is not that formula, and the pitch does not say it is. Replay rows stay out of the Masumi audit. The build spec is [docs/DECISIONS.md](docs/DECISIONS.md) and section 15 of [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## 11. Checked before building
 
