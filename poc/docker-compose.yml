@@ -1,0 +1,115 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: hedge
+      POSTGRES_PASSWORD: hedge
+      POSTGRES_DB: postgres
+    volumes:
+      - ./db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hedge -d postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 20
+
+  facilitator:
+    build: .
+    command: ["node", "dist/main.js"]
+    env_file: .env
+    environment:
+      PROCESS: facilitator
+      PORT: "3002"
+      DATABASE_URL: postgresql://hedge:hedge@postgres:5432/hedge
+    ports:
+      - "3002:3002"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  gateway:
+    build: .
+    command: ["node", "dist/main.js"]
+    environment:
+      PROCESS: gateway
+      PORT: "3003"
+      DATABASE_URL: postgresql://hedge:hedge@postgres:5432/hedge
+    ports:
+      - "3003:3003"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  crypto:
+    build: .
+    command: ["node", "dist/main.js"]
+    env_file: .env
+    environment:
+      PROCESS: agent
+      ROLE: crypto
+      PORT: "8081"
+      DATABASE_URL: postgresql://hedge:hedge@postgres:5432/hedge
+    ports:
+      - "8081:8081"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  stocks:
+    build: .
+    command: ["node", "dist/main.js"]
+    env_file: .env
+    environment:
+      PROCESS: agent
+      ROLE: stocks
+      PORT: "8082"
+      DATABASE_URL: postgresql://hedge:hedge@postgres:5432/hedge
+    ports:
+      - "8082:8082"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  manager:
+    build: .
+    command: ["node", "dist/main.js"]
+    env_file: .env
+    environment:
+      PROCESS: agent
+      ROLE: manager
+      PORT: "8080"
+      DATABASE_URL: postgresql://hedge:hedge@postgres:5432/hedge
+      FACILITATOR_URL: http://facilitator:3002
+      GATEWAY_URL: http://gateway:3003
+      CRYPTO_URL: http://crypto:8081
+      STOCKS_URL: http://stocks:8082
+    ports:
+      - "8080:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      crypto:
+        condition: service_started
+      stocks:
+        condition: service_started
+      facilitator:
+        condition: service_started
+
+  payment:
+    profiles: ["masumi"]
+    image: ghcr.io/masumi-network/masumi-payment-service:latest
+    command: ["sh", "-c", "pnpm run prisma:migrate && pnpm run start"]
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://hedge:hedge@postgres:5432/masumi?schema=public
+      PORT: "3001"
+      CHECK_TX_INTERVAL: "20"
+      BATCH_PAYMENT_INTERVAL: "30"
+      BLOCK_CONFIRMATIONS_THRESHOLD: "1"
+    ports:
+      - "3001:3001"
+    depends_on:
+      postgres:
+        condition: service_healthy
