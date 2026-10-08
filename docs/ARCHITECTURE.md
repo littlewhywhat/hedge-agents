@@ -23,7 +23,7 @@ Out:
 - A live bridge inside a trade. Inventory is funded before the demo.
 - Importing `ai-hedge-fund`. We copy the shape of its ledger and its clamp events.
 - Replay rows in the Masumi audit, or a replay profit copied in as a live deposit.
-- An agent meeting that sets weights. A news shock runs the daily-loss rule. It does not negotiate a new strategy.
+- An agent meeting that sets weights. A headline does not set the score and does not negotiate a strategy.
 
 The paper's useful slice is the shape: specialists, a manager who is not one of them, a periodic budget conference, and an emergency de-risk. The experience-sharing conference and the options hedge are not in this build.
 
@@ -484,7 +484,11 @@ The live service can be up during the pitch. Switching is a change of which rout
 
 Playback keeps those frames, including the one shock frame, and interpolates profile value between them so the minute moves. The history list is the sim's full trade set. The animation does not invent extra trades.
 
-**The shock.** A drop of more than `0.20` from the previous point on one sleeve. The example is `0.87` to `0.40`. It starts one emergency round, the daily-loss path: the named agent is sold toward cash and blocked from receiving budget. A smaller step only moves budget. Each trader still returns an objection. Code applies it only when it recomputes the same rule. The frame shows the score before and after, the objections, and the weights before and after. A headline on that frame is a caption. It does not fire the round. No field on that frame is a proposed weight. The round does not end in a strategy the formula did not compute.
+**The shock.** A drop of more than `0.20` from the previous point on one sleeve. The example is `0.87` to `0.40`. It starts one emergency round, the daily-loss path: the named agent is sold toward cash and blocked from receiving budget. A smaller step only moves budget. The weight of that sleeve can fall by at most `max_step` (20 points in the demo) in the same round. The slice that moves can be bought by another sleeve. The rest of the sale stays as cash in the sleeve that dropped. Each trader still returns an objection. Code applies it only when it recomputes the same rule. The frame shows the score before and after, the objections, and the weights before and after. No field on that frame is a proposed weight. The round does not end in a strategy the formula did not compute.
+
+The score is not a dial from a safe asset to a volatile one. `0` does not mean gold and `1` does not mean BTC. Each sleeve has its own score. `0.87` and `0.40` are the same sleeve at two frames.
+
+**Headline.** The live score reads prices only: decayed return divided by volatility. A headline that says the market crashed does not change the score when the prices did not move. On the pitch the headline is a caption on the shock frame. It does not fire the round. Live, an ordinary headline is context on the decision. The trader model may lower conviction, and the code may then hold a smaller token position inside the existing cap. A failed model call holds. The headline does not move budget between sleeves. Only a headline we have tagged as an emergency enters the daily-loss path, and that tag is not applied to an ordinary article.
 
 **Live, after the switch.** Profile, chart, and history call the live routes. Live history starts at the first real deposit. Replay totals never become that deposit. Binance BTC and ETH klines, the S&P series, and a free headline feed keep updating in the background and can change conviction on a later tick. They cannot change the allowlist, the mark, or the venue. A headline mapped to the emergency tag trips the same daily-loss path as the tape. Any other headline is context on the decision row.
 

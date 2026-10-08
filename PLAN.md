@@ -272,8 +272,9 @@ Section 10 is the live walkthrough. This section is the one-minute stage pitch. 
 Each sleeve has a handwritten series of about 8–12 points, one point per frame, for example BTC `[0.80, 0.84, 0.87, 0.40]`. ETH and the S&P sleeve have their own series of the same length.
 
 - A small step, such as `0.80` to `0.84`, only moves budget through the weight rules in section 6.
-- A large drop is the shock. `0.87` to `0.40` is the example. The rule is a fall of more than `0.20` from the previous point. That agent sells toward cash and is blocked from receiving budget. The series is written so this happens once.
+- A large drop is the shock. `0.87` to `0.40` is the example. The rule is a fall of more than `0.20` from the previous point. That agent sells toward cash and is blocked from receiving budget. Its share of the fund falls by at most 20 points in that round. The slice that moves can be bought by another sleeve. The rest of the sale stays as cash on the sleeve that dropped. The series is written so this happens once.
 - The other agents do not meet and do not propose a new strategy. Objections still have to name a rule the code can recompute.
+- The number is not a dial from gold to BTC. Each sleeve has its own series. A headline does not change the score. If the caption says "BTC crash" and the BTC price did not fall, the BTC score stays where it was. Live, that headline can only nudge that sleeve's next conviction, inside the position cap, unless we have tagged it as an emergency.
 
 The runtime runs those rules on the series and stores the paper trades. The profile adds the trades to the price bars, so the history matches the chart. The player reads the stored rows. It does not recompute the score while the clock runs.
 
