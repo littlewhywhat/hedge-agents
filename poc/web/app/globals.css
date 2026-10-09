@@ -1,0 +1,147 @@
+:root {
+  color-scheme: dark;
+  --bg: #10120e;
+  --panel: #171a13;
+  --panel-2: #1e2218;
+  --line: #313628;
+  --text: #f3efe2;
+  --muted: #8f8b78;
+  --lime: #dff25a;
+  --crypto: #7ee0c6;
+  --stocks: #f0a36b;
+  --amber: #e2b15a;
+  --good: #b6d96a;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background:
+    radial-gradient(1200px 500px at 50% -10%, #2a3118 0%, transparent 55%),
+    var(--bg);
+  color: var(--text);
+  font-family: var(--font-outfit), sans-serif;
+}
+
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+
+.desk {
+  height: 100vh;
+  display: grid;
+  grid-template-rows: 64px 1fr;
+  padding: 16px;
+  gap: 12px;
+}
+
+.top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px;
+}
+.brand { display: flex; flex-direction: column; gap: 2px; }
+.brand b { letter-spacing: 0.16em; font-size: 13px; }
+.brand span, .meta { color: var(--muted); font-family: var(--font-mono), monospace; font-size: 12px; }
+.live {
+  display: flex; align-items: center; gap: 8px;
+  color: var(--lime); font-size: 13px;
+}
+.dot {
+  width: 8px; height: 8px; border-radius: 99px; background: var(--lime);
+  box-shadow: 0 0 0 0 rgba(223, 242, 90, 0.7);
+  animation: pulse 1.4s infinite;
+}
+@keyframes pulse {
+  70% { box-shadow: 0 0 0 8px rgba(223, 242, 90, 0); }
+}
+
+.grid {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 240px 1fr 320px;
+  gap: 12px;
+}
+
+.panel {
+  background: rgba(23, 26, 19, 0.92);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.rounds, .side { display: flex; flex-direction: column; }
+.rounds header, .chat header, .side header {
+  padding: 16px 16px 10px;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+}
+
+.round {
+  margin: 0 10px 8px;
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  padding: 12px;
+}
+.round.on { background: var(--panel-2); border-color: var(--line); }
+.round .when { display: block; font-size: 16px; }
+.round .split { display: block; margin-top: 4px; color: var(--muted); font-family: var(--font-mono), monospace; font-size: 12px; }
+
+.chat { display: grid; grid-template-rows: auto 1fr auto; }
+.chat header { display: flex; justify-content: space-between; align-items: baseline; }
+.chat header b { color: var(--text); letter-spacing: 0; font-size: 14px; font-weight: 500; }
+.thread {
+  overflow: auto;
+  padding: 8px 22px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.bubble { max-width: 640px; animation: in 0.35s ease; }
+@keyframes in { from { opacity: 0; transform: translateY(8px); } }
+.who { font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 4px; }
+.who.manager { color: var(--text); }
+.who.crypto { color: var(--crypto); }
+.who.stocks { color: var(--stocks); }
+.bubble p {
+  margin: 0;
+  background: #12150f;
+  border-left: 2px solid var(--line);
+  padding: 10px 12px;
+  line-height: 1.45;
+}
+.bubble.manager p { border-color: var(--lime); }
+.bubble.crypto p { border-color: var(--crypto); }
+.bubble.stocks p { border-color: var(--stocks); }
+.typing { color: var(--muted); letter-spacing: 0.3em; padding: 8px 0; }
+
+.side { padding-bottom: 12px; }
+.forward {
+  margin: 0 16px 8px;
+  background: var(--lime);
+  color: #16180f;
+  border: 0;
+  border-radius: 12px;
+  padding: 14px 12px;
+  font-weight: 650;
+}
+.forward small { display: block; font-weight: 450; opacity: 0.7; font-size: 12px; }
+.forward:disabled { opacity: 0.45; cursor: wait; }
+
+.balances { padding: 4px 16px 8px; display: flex; flex-direction: column; gap: 8px; }
+.row, .tx { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.row span, .tx span { font-family: var(--font-mono), monospace; }
+.name.crypto { color: var(--crypto); }
+.name.stocks { color: var(--stocks); }
+.name.reserve, .name.manager { color: var(--text); }
+.total { border-top: 1px solid var(--line); padding-top: 8px; }
+.log { overflow: auto; padding: 0 16px; display: flex; flex-direction: column; gap: 10px; }
+.tx { font-size: 13px; }
+.tx em { font-style: normal; color: var(--muted); font-family: var(--font-mono), monospace; font-size: 11px; }
+.pending { color: var(--amber); }
+.confirmed { color: var(--good); }
+.err { color: #ff8d7a; padding: 0 16px; font-size: 13px; }
