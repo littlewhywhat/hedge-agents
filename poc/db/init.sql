@@ -66,6 +66,7 @@ create table if not exists agent_state (
   experience text not null default '',
   updated_at timestamptz not null default now()
 );
+alter table agent_state add column if not exists thought jsonb;
 
 create table if not exists broker_accounts (
   role text primary key,

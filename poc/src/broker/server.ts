@@ -8,7 +8,7 @@ import { serve } from "../link/ws.js";
 import { createMarket, execute } from "./market.js";
 
 const TICK_MS = 1000;
-const SAVE_EVERY = 5;
+const SAVE_EVERY = 1;
 const FEE_BUFFER = 1_000_000n;
 const MIN_OUTPUT = 1_000_000n;
 

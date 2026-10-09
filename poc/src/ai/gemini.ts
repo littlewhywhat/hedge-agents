@@ -111,7 +111,8 @@ ${reports || "no results yet, this is the first cycle"}
 Market news:
 ${ASSETS.map((asset) => `${asset}: ${input.trends[asset]}`).join("\n")}
 
-Rules: shares are fractions that sum to 1. Each agent at most 0.4. Reserve at least 0.1. Do not change any share by more than 0.2.
+This is a live demo: be bold. Back your strongest conviction hard, keep every agent in the game, and prefer aggressive stances with large positions unless the news is clearly bad.
+Rules: shares are fractions that sum to 1. Each agent at least 0.1 and at most 0.5. Reserve between 0.05 and 0.2. Do not change any share by more than 0.3.
 stance is one of aggressive, balanced, defensive. maxPositionPct is the most of the agent's cash it may hold in the asset (0-100). stopLossPct is the loss in percent at which it sells everything.
 Answer with JSON only:
 {"weights":{"btc":0,"eth":0,"spx":0,"gold":0,"reserve":0},"strategies":{"btc":{"stance":"","maxPositionPct":0,"stopLossPct":0,"notes":""},"eth":{...},"spx":{...},"gold":{...}},"rationale":"two or three sentences"}`;

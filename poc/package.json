@@ -4,8 +4,8 @@
   "type": "module",
   "scripts": {
     "test": "tsx --test src/*/*.test.ts",
-    "lint": "biome check src web scripts",
-    "typecheck": "tsc --noEmit && tsc -p web --noEmit",
+    "lint": "biome check src scripts",
+    "typecheck": "tsc --noEmit",
     "build": "tsc",
     "start": "node dist/main.js",
     "wallets": "tsx scripts/wallets.ts"

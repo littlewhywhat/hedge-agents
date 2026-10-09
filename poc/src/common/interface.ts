@@ -139,6 +139,12 @@ export type AgentReport = {
   experience: string;
 };
 
+export type Thought = TradeIdea & {
+  price: number;
+  at: string;
+  nextAt: string;
+};
+
 export type ValueSnapshot = {
   role: Asset;
   cash: bigint;

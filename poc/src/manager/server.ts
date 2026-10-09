@@ -4,12 +4,13 @@ import type { Config } from "../common/config.js";
 import { ASSETS, type AgentReply, type AgentRequest } from "../common/interface.js";
 import { errorText, log } from "../common/time.js";
 import { openWallet } from "../chain/cardano.js";
-import { openLedger, openManagerStore } from "../db/pg.js";
+import { openDeskStore, openLedger, openManagerStore } from "../db/pg.js";
 import { connect } from "../link/ws.js";
 import { type AgentPeers, createManager } from "./cycle.js";
 
 export const startManager = async (config: Config): Promise<void> => {
   const store = openManagerStore(config.databaseUrl);
+  const desk = openDeskStore(config.databaseUrl);
   const wallet = openWallet({
     role: "manager",
     mnemonic: config.mnemonics.manager,
@@ -48,6 +49,17 @@ export const startManager = async (config: Config): Promise<void> => {
       ...(await store.state()),
       ...manager.status(),
       agents: Object.fromEntries(ASSETS.map((asset) => [asset, agents[asset].connected()])),
+    });
+  });
+
+  app.get("/desk", async (_req, res) => {
+    res.json({
+      ...(await desk.state()),
+      live: {
+        ...(await store.state()),
+        ...manager.status(),
+        agents: Object.fromEntries(ASSETS.map((asset) => [asset, agents[asset].connected()])),
+      },
     });
   });
 

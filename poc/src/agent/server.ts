@@ -12,6 +12,7 @@ import type {
   BrokerReply,
   BrokerRequest,
   Strategy,
+  TradeIdea,
 } from "../common/interface.js";
 import { errorText, log, sleep } from "../common/time.js";
 import { openWallet } from "../chain/cardano.js";
@@ -78,7 +79,14 @@ export const startAgent = async (config: Config): Promise<void> => {
   const decideOnce = async (): Promise<void> => {
     const { account: current, price } = await account();
     await store.snapshot({ role, cash: current.cash, qty: current.qty, price, value: valueOf(current, price) });
-    if (prices.length < 10) return;
+    const think = (idea: TradeIdea): Promise<void> => {
+      const at = Date.now();
+      return store.think(role, { ...idea, price, at: new Date(at).toISOString(), nextAt: new Date(at + config.decideMs).toISOString() });
+    };
+    if (prices.length < 10) {
+      await think({ side: "hold", fraction: 0, reason: "Watching the first prices before acting." });
+      return;
+    }
     const idea = await brain.trade({
       asset: role,
       strategy: state.strategy ?? BALANCED,
@@ -87,6 +95,7 @@ export const startAgent = async (config: Config): Promise<void> => {
       qty: current.qty,
       entryValue: state.deposited,
     });
+    await think(idea);
     if (idea.side === "hold" || idea.fraction <= 0) return;
     const reply = await broker.request({
       type: "order",

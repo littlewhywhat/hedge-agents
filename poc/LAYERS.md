@@ -19,8 +19,8 @@ flowchart TB
     db["db: ManagerStore / AgentStore / BrokerStore / Ledger / DeskStore (pg)"]
   end
 
-  web["web (Next.js)"] -->|HTTP start / stop| manager
-  web -->|DeskStore| db
+  web["../web (Next.js, Live desk tab)"] -->|HTTP /desk, /start, /stop| manager
+  manager -->|DeskStore| db
 
   manager --> link
   agent --> link
@@ -46,7 +46,7 @@ flowchart TB
   class pg store
 ```
 
-Types for each layer live in `interface.ts`: `src/common/interface.ts` (domain and socket messages), `src/db/interface.ts`, `src/chain/interface.ts`, `src/ai/interface.ts`, `src/link/interface.ts`, `web/interface.ts`. Only `src/db/pg.ts` imports `pg`, only `src/chain/` imports x402, only `src/ai/gemini.ts` calls Gemini, only `src/link/ws.ts` imports `ws`.
+Types for each layer live in `interface.ts`: `src/common/interface.ts` (domain and socket messages), `src/db/interface.ts`, `src/chain/interface.ts`, `src/ai/interface.ts`, `src/link/interface.ts`. The UI's copy of the desk types is in `../web/app/types.ts`. Only `src/db/pg.ts` imports `pg`, only `src/chain/` imports x402, only `src/ai/gemini.ts` calls Gemini, only `src/link/ws.ts` imports `ws`.
 
 ## One cycle
 

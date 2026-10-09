@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { EQUAL } from "../ai/fallback.js";
 import { ada } from "../common/ada.js";
 import { ASSETS } from "../common/interface.js";
-import { capWeights, MAX_AGENT, MAX_STEP, MIN_RESERVE, planMoves } from "./allocate.js";
+import { capWeights, MAX_AGENT, MAX_RESERVE, MAX_STEP, MIN_AGENT, MIN_RESERVE, planMoves } from "./allocate.js";
 
 const sum = (weights: Record<string, number>): number => Object.values(weights).reduce((total, value) => total + value, 0);
 
@@ -18,6 +18,19 @@ test("capWeights limits how far one cycle can move a share", () => {
   const weights = capWeights(EQUAL, { btc: 1, eth: 0, spx: 0, gold: 0, reserve: 0 });
   assert.ok(weights.btc <= EQUAL.btc + MAX_STEP + 1e-9);
   assert.ok(weights.eth >= EQUAL.eth - MAX_STEP - 1e-9);
+});
+
+test("capWeights gives every agent at least the floor, even from zero", () => {
+  const weights = capWeights({ btc: 0, eth: 0, spx: 0.1, gold: 0.4, reserve: 0.5 }, { btc: 0, eth: 0, spx: 0, gold: 1, reserve: 0 });
+  for (const asset of ASSETS) assert.ok(weights[asset] >= MIN_AGENT - 1e-4, `${asset} ${weights[asset]}`);
+  assert.ok(Math.abs(sum(weights) - 1) < 1e-3);
+});
+
+test("capWeights deploys the fund when the proposal hoards reserve", () => {
+  const weights = capWeights(EQUAL, { btc: 0.1, eth: 0.1, spx: 0.1, gold: 0.1, reserve: 0.6 });
+  assert.ok(weights.reserve <= MAX_RESERVE + 1e-4, `reserve ${weights.reserve}`);
+  for (const asset of ASSETS) assert.ok(weights[asset] <= MAX_AGENT + 1e-9);
+  assert.ok(Math.abs(sum(weights) - 1) < 1e-3);
 });
 
 test("capWeights normalizes shares that do not sum to one", () => {

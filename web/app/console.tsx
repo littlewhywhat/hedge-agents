@@ -1,18 +1,13 @@
 "use client";
 
 import { startTransition, useDeferredValue, useEffect, useRef, useState } from "react";
-import Image from "next/image";
 import Link from "next/link";
-import { Activity, ArrowDownLeft, ArrowRight, ArrowUpRight, Check, CheckCheck, ChevronDown, ChevronRight, CircleHelp, CirclePause, Coins, Copy, ExternalLink, Fingerprint, Hexagon, History, KeyRound, Landmark, LayoutDashboard, LoaderCircle, LockKeyhole, MessageSquare, Pause, Play, Power, RefreshCw, Search, Send, Settings2, ShieldCheck, ShieldOff, SkipBack, SkipForward, SlidersHorizontal, Users, Wallet, X } from "lucide-react";
+import { Activity, ArrowDownLeft, ArrowRight, ArrowUpRight, Check, CheckCheck, ChevronDown, ChevronRight, CircleHelp, CirclePause, Copy, ExternalLink, Fingerprint, Hexagon, History, KeyRound, LayoutDashboard, LoaderCircle, LockKeyhole, MessageSquare, Pause, Play, Power, RadioTower, RefreshCw, Search, Send, Settings2, ShieldCheck, ShieldOff, SkipBack, SkipForward, SlidersHorizontal, Users, Wallet, X } from "lucide-react";
 import { CartesianGrid, Line, LineChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import LiveDesk from "./live-desk";
 import type { AgentName, AuditEvent, Frame, Inventory, LiveData, Message, Numbers, PaperTrade, PolicyState, Proposal, Readiness, Round } from "./types";
+import { Avatar, Empty, Pill, markets } from "./ui";
 
-const markets: Record<string, { name: string; symbol: string; color: string }> = {
-  btc: { name: "Bitcoin", symbol: "cbBTC", color: "#e79a39" },
-  eth: { name: "Ethereum", symbol: "WETH", color: "#6486d7" },
-  stocks: { name: "S&P 500", symbol: "SPYx", color: "#379b81" },
-  gold: { name: "Gold", symbol: "PAXG", color: "#b5a344" },
-};
 const historicalLabels: Record<string, string> = {
   btc: "BTC/USDT / daily candles",
   eth: "ETH/USDT / daily candles",
@@ -25,6 +20,7 @@ const tabs = [
   { id: "audit", label: "Audit trail", icon: Fingerprint },
   { id: "chat", label: "Fund chat", icon: MessageSquare },
   { id: "controls", label: "Controls", icon: SlidersHorizontal },
+  { id: "desk", label: "Live desk", icon: RadioTower },
 ];
 const dollars = (value: string | number | undefined, digits = 2) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: digits, minimumFractionDigits: digits }).format(Number(value || 0));
 const percent = (value: string | number | undefined) => `${(Number(value || 0) * 100).toFixed(1)}%`;
@@ -39,20 +35,6 @@ async function api<T>(path: string, body?: unknown, token?: string): Promise<T> 
   const result = await response.json();
   if (!response.ok) throw new Error(typeof result.detail === "string" ? result.detail : "Request rejected. Check the submitted values.");
   return result;
-}
-
-function Avatar({ agent, small = false }: { agent: string; small?: boolean }) {
-  return <span className={`avatar ${small ? "small" : ""}`} style={{ background: `${markets[agent]?.color || "#888"}15`, color: markets[agent]?.color }}>
-    {agent === "btc" || agent === "eth" ? <Image src={`/assets/${agent}.png`} alt="" width={small ? 22 : 28} height={small ? 22 : 28} /> : agent === "gold" ? <Coins size={small ? 18 : 22} /> : <Landmark size={small ? 18 : 22} />}
-  </span>;
-}
-
-function Empty({ icon: Icon = Wallet, heading, text }: { icon?: typeof Wallet; heading: string; text: string }) {
-  return <div className="empty"><span className="empty-icon"><Icon size={26} strokeWidth={1.5} /></span><h3>{heading}</h3><p>{text}</p></div>;
-}
-
-function Pill({ children, tone = "neutral" }: { children: React.ReactNode; tone?: string }) {
-  return <span className={`pill ${tone}`}><span className="status-dot" />{children}</span>;
 }
 
 function HistoricalSources({ frame }: { frame: Frame }) {
@@ -226,6 +208,7 @@ export default function Console() {
     <div className="main-shell">
       <header className="topbar"><div className="breadcrumb">Masumi Fund <ChevronRight size={13} /><span>{tabs.find((item) => item.id === tab)?.label}</span></div><div className="topbar-actions"><span className="network-indicator"><span className="status-dot amber" />{live?.fund.environment === "mainnet" ? "Mainnet" : "Preprod"}</span><span className="top-divider" /><button className="icon-button" title="Refresh fund data" aria-label="Refresh fund data" onClick={() => void refreshData().catch((failure: Error) => setNotice(failure.message))}><RefreshCw size={16} /></button><button className="icon-button" title="Operator access" aria-label="Operator access" onClick={() => setTokenOpen(true)}><KeyRound size={17} /></button></div></header>
       <main className="main-content">
+        {tab === "desk" ? <LiveDesk /> : <>
         <div className="page-heading"><div><div className="eyebrow">MASUMI FUND / {replay ? "PAPER RECORDING" : "LIVE LEDGER"}</div><h1>{({ overview: "Fund overview", team: "Agent team", audit: "Audit trail", chat: "Fund chat", controls: "Fund controls" })[tab]}</h1></div><div className="mode-switch" role="group" aria-label="Data source"><button aria-pressed={replay} className={replay ? "selected" : ""} onClick={() => switchMode("replay")}><History size={15} />Replay</button><button aria-pressed={!replay} className={!replay ? "selected" : ""} onClick={() => switchMode("live")}><span className="status-dot" />Live fund</button></div></div>
 
         <div className={`environment-banner ${replay ? "recording" : "preprod"}`}><div><span className="banner-icon">{replay ? <History size={16} /> : <ShieldCheck size={16} />}</span><strong>{replay ? "Paper recording" : live?.fund.environment === "mainnet" ? "Mainnet" : "Preprod / play money"}</strong><span className="banner-detail">{replay ? "Your historical prices. Each sleeve asks for load from its own return." : live?.fund.environment === "mainnet" ? "Real assets. Confirmed receipts only." : "tUSDM + Solana devnet. Not real USD profit."}</span></div><span className="banner-end">{replay ? frame?.provenance.source === "local_files" ? `${Object.keys(frame.provenance.files || {}).length} local files` : "Historical tape" : live?.fund.armed ? "Automation armed" : "Automation not armed"}</span></div>
@@ -265,6 +248,7 @@ export default function Console() {
 
         {!live && !error && <div className="loading-line"><LoaderCircle size={16} className="spin" />Connecting to the fund monitor...</div>}
         <footer className="footer"><span><ShieldCheck size={13} />{replay ? "Historical replay / isolated paper ledger" : "Postgres ledger / confirmed chain receipts"}</span><span>{replay ? "The mechanism, not proof of a trading edge." : "One operator. One fund. No keys in the browser."}</span></footer>
+        </>}
       </main>
     </div>
 

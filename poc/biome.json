@@ -3,7 +3,6 @@
   "files": {
     "includes": [
       "src/**",
-      "web/**",
       "scripts/**",
       "!**/node_modules",
       "!**/.next",

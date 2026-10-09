@@ -4,11 +4,11 @@ A manager splits a tADA fund across four trading agents (btc, eth, spx, gold). A
 
 | process | port | does |
 |---|---|---|
-| manager | 8080 (HTTP) | Runs the cycle loop. `POST /start`, `POST /stop`, `GET /state`. |
+| manager | 8080 (HTTP) | Runs the cycle loop. `POST /start`, `POST /stop`, `GET /state`, `GET /desk` (full snapshot for the UI). |
 | btc, eth, spx, gold | 8081–8084 (WebSocket) | Deposit to the broker, trade with the manager's strategy, withdraw on stop, report. |
 | broker | 8090 (WebSocket) | Simulates prices every second, keeps accounts, fills orders, checks deposits on chain, pays withdrawals. |
 | postgres | 5432 | All state. Any process can restart and continue. |
-| web | 3000 | Start and Stop, agents, cycles, transactions. |
+| ../web | 3000 | Fund console. The **Live desk** tab shows agents, cycles, transactions, Start and Stop. |
 
 ## Run
 
@@ -17,17 +17,17 @@ cp .env.example .env        # fill BLOCKFROST_PROJECT_ID, GEMINI_API_KEY, MNEMON
 npm install
 npm run wallets             # generates missing wallets, tops each up to WALLET_RESERVE_ADA from the manager
 docker compose up --build -d
-cd web && npm install && npm run dev
+cd ../web && npm ci && npm run dev
 ```
 
-Open http://localhost:3000 and press Start. Behind a TLS-inspecting proxy, put its root certificate in `.zscaler-root.pem` and set `NODE_EXTRA_CA_CERTS` for `npm run wallets`. `docker-compose.override.yml` mounts it into every container.
+`../web/.env.local` needs `MANAGER_URL=http://127.0.0.1:8080` and `MANAGER_TOKEN` (same value as `OPERATOR_TOKEN` here). Open http://localhost:3000, choose **Live desk** in the sidebar and press Start. Behind a TLS-inspecting proxy, put its root certificate in `.zscaler-root.pem` and set `NODE_EXTRA_CA_CERTS` for `npm run wallets`. `docker-compose.override.yml` mounts it into every container.
 
 ## Money
 
 - Every wallet keeps `WALLET_RESERVE_ADA` for fees. Agents deposit everything above it.
 - The manager allocates `FUND_ADA` plus whatever agents hold. Its own wallet can hold more; only that amount is in play.
 - The broker starts with `BROKER_HOUSE_ADA`. Simulated profits are paid from it and losses stay in it. If it runs short, the unpaid part stays as the agent's cash at the broker.
-- Gemini proposes shares. Code caps them: at most 40% per agent, at least 10% reserve, at most 20 points of change per cycle. Moves under 2 tADA are skipped.
+- Gemini proposes shares. Code bounds them for the demo: every agent gets 10–50%, the reserve stays at 5–20%, and a share moves at most 30 points per cycle. Moves under 2 tADA are skipped.
 
 ## Timing
 

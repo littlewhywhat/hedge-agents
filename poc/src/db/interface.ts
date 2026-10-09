@@ -7,6 +7,8 @@ import type {
   Fill,
   ManagerState,
   Role,
+  Side,
+  Thought,
   Tick,
   Transfer,
   TransferStatus,
@@ -38,6 +40,7 @@ export type AgentStore = {
   save(state: AgentState): Promise<void>;
   fills(role: Asset, cycleId: number): Promise<Fill[]>;
   snapshot(row: ValueSnapshot): Promise<void>;
+  think(role: Asset, thought: Thought): Promise<void>;
 };
 
 export type BrokerStore = {
@@ -75,8 +78,24 @@ export type DeskAgent = {
   experience: string;
   cash: string;
   qty: number;
+  price: number | null;
   value: string;
+  deposited: string;
+  thought: Thought | null;
   updatedAt: string | null;
+};
+
+export type DeskTrade = {
+  id: number;
+  role: Asset;
+  cycleId: number | null;
+  side: Side;
+  qty: number;
+  price: number;
+  cash: string;
+  fee: string;
+  reason: string;
+  at: string;
 };
 
 export type DeskTransfer = {
@@ -97,6 +116,7 @@ export type DeskState = {
   agents: DeskAgent[];
   cycles: DeskCycle[];
   transfers: DeskTransfer[];
+  trades: DeskTrade[];
   prices: Record<string, { at: string; price: number }[]>;
   values: Record<string, { at: string; value: string }[]>;
   wallets: { role: string; address: string }[];

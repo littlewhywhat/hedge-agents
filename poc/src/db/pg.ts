@@ -8,6 +8,8 @@ import type {
   Fill,
   ManagerState,
   Role,
+  Side,
+  Thought,
   Tick,
   Transfer,
   ValueSnapshot,
@@ -16,6 +18,7 @@ import type {
 import type {
   AgentStore,
   BrokerStore,
+  DeskAgent,
   DeskCycle,
   DeskState,
   DeskStore,
@@ -334,6 +337,10 @@ class PgAgentStore implements AgentStore {
       [row.role, row.cash.toString(), row.qty, row.price, row.value.toString()],
     );
   }
+
+  async think(role: Asset, thought: Thought): Promise<void> {
+    await this.pool.query("update agent_state set thought = $2 where role = $1", [role, JSON.stringify(thought)]);
+  }
 }
 
 class PgBrokerStore implements BrokerStore {
@@ -441,19 +448,21 @@ class PgDeskStore implements DeskStore {
   constructor(private pool: pg.Pool) {}
 
   async state(): Promise<DeskState> {
-    const [manager, agents, accounts, latestValues, cycles, reports, transfers, prices, values, wallets] = await Promise.all([
+    const [manager, agents, accounts, latestPrices, cycles, reports, transfers, prices, values, wallets, trades] = await Promise.all([
       this.pool.query<{ running: boolean; cycle_id: string | null; next_at: Date | null }>("select * from manager_state where id = 1"),
       this.pool.query<{
         role: Asset;
         phase: string;
         cycle_id: string | null;
         strategy: { stance?: string; notes?: string } | null;
+        deposited: string;
+        thought: Thought | null;
         experience: string;
         updated_at: Date;
-      }>("select * from agent_state order by role"),
+      }>("select *, deposited::text from agent_state order by role"),
       this.pool.query<{ role: string; cash: string; qty: number }>("select role, cash::text, qty from broker_accounts"),
-      this.pool.query<{ role: string; value: string }>(
-        "select distinct on (role) role, value::text from value_snapshots order by role, at desc",
+      this.pool.query<{ asset: string; price: number }>(
+        "select distinct on (asset) asset, price from prices order by asset, at desc",
       ),
       this.pool.query<CycleRow>("select * from cycles order by id desc limit 20"),
       this.pool.query<{
@@ -468,16 +477,37 @@ class PgDeskStore implements DeskStore {
       }>("select * from reports where cycle_id in (select id from cycles order by id desc limit 20)"),
       this.pool.query<TransferRow & { created_at: Date }>("select * from transfers order by created_at desc limit 80"),
       this.pool.query<{ asset: string; at: Date; price: number }>(
-        "select asset, at, price from prices where at > now() - interval '15 minutes' order by at",
+        `select distinct on (asset, date_bin('5 seconds', at, 'epoch')) asset, at, price from prices
+         where at > now() - interval '15 minutes'
+         order by asset, date_bin('5 seconds', at, 'epoch'), at desc`,
       ),
       this.pool.query<{ role: string; at: Date; value: string }>(
         "select role, at, value::text from value_snapshots where at > now() - interval '2 hours' order by at",
       ),
       this.pool.query<{ role: string; address: string }>("select role, address from wallets order by role"),
+      this.pool.query<{
+        id: string;
+        role: Asset;
+        cycle_id: string | null;
+        side: Side;
+        qty: number;
+        price: number;
+        cash: string;
+        fee: string;
+        reason: string;
+        created_at: Date;
+      }>("select id, role, cycle_id, side, qty, price, cash::text, fee::text, reason, created_at from broker_orders order by id desc limit 40"),
     ]);
 
     const account = new Map(accounts.rows.map((row) => [row.role, row]));
-    const latest = new Map(latestValues.rows.map((row) => [row.role, row.value]));
+    const lastPrice = new Map(latestPrices.rows.map((row) => [row.asset, Number(row.price)]));
+    const mark = (role: string): bigint => {
+      const row = account.get(role);
+      const price = lastPrice.get(role);
+      if (!row) return 0n;
+      return BigInt(row.cash) + BigInt(Math.floor(Number(row.qty) * (price ?? 0) * 1_000_000));
+    };
+    const now = new Date().toISOString();
     const byCycle = new Map<string, DeskCycle["reports"]>();
     for (const row of reports.rows) {
       const list = byCycle.get(row.cycle_id) ?? [];
@@ -500,6 +530,9 @@ class PgDeskStore implements DeskStore {
     for (const row of values.rows) {
       (valueSeries[row.role] ??= []).push({ at: row.at.toISOString(), value: row.value });
     }
+    for (const row of agents.rows) {
+      if (row.phase === "trading") (valueSeries[row.role] ??= []).push({ at: now, value: mark(row.role).toString() });
+    }
     const head = manager.rows[0];
 
     return {
@@ -517,7 +550,10 @@ class PgDeskStore implements DeskStore {
         experience: row.experience,
         cash: account.get(row.role)?.cash ?? "0",
         qty: Number(account.get(row.role)?.qty ?? 0),
-        value: latest.get(row.role) ?? "0",
+        price: lastPrice.get(row.role) ?? null,
+        value: mark(row.role).toString(),
+        deposited: row.deposited,
+        thought: row.thought,
         updatedAt: row.updated_at.toISOString(),
       })),
       cycles: cycles.rows.map((row) => ({
@@ -543,6 +579,18 @@ class PgDeskStore implements DeskStore {
         status: row.status,
         txId: row.tx_id,
         detail: row.detail,
+        at: row.created_at.toISOString(),
+      })),
+      trades: trades.rows.map((row) => ({
+        id: Number(row.id),
+        role: row.role,
+        cycleId: row.cycle_id == null ? null : Number(row.cycle_id),
+        side: row.side,
+        qty: Number(row.qty),
+        price: Number(row.price),
+        cash: row.cash,
+        fee: row.fee,
+        reason: row.reason,
         at: row.created_at.toISOString(),
       })),
       prices: priceSeries,
