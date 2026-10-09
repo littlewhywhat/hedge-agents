@@ -1,0 +1,15 @@
+FROM docker.io/library/node:24-alpine AS build
+WORKDIR /app
+COPY agents/facilitator/package.json agents/facilitator/package-lock.json ./
+RUN npm ci
+COPY agents/facilitator/tsconfig.json ./
+COPY agents/facilitator/src ./src
+RUN npm run build && npm prune --omit=dev
+
+FROM docker.io/library/node:24-alpine
+WORKDIR /app
+COPY --from=build --chown=node:node /app ./
+ENV NODE_ENV=production HOST=0.0.0.0 PORT=8084
+USER node
+EXPOSE 8084
+CMD ["node", "dist/server.js"]

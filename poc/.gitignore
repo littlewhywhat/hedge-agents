@@ -1,0 +1,7 @@
+node_modules
+dist
+.next
+*.tsbuildinfo
+.env
+.zscaler-root.pem
+docker-compose.override.yml
