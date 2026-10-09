@@ -1,0 +1,30 @@
+services:
+  payment-service:
+    build:
+      context: https://github.com/masumi-network/masumi-payment-service.git#d569a338ca54d5be7441564770d75ebf89b71f12
+      dockerfile: Dockerfile
+    environment:
+      DATABASE_URL: postgresql://masumi_app:${MASUMI_DATABASE_PASSWORD}@postgres:5432/masumi?schema=public
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?Set and securely back up ENCRYPTION_KEY}
+      ADMIN_KEY: ${PAYMENT_ADMIN_KEY:?Set the Payment Service admin key}
+      PORT: "3001"
+      CHECK_TX_INTERVAL: "20"
+      BATCH_PAYMENT_INTERVAL: "30"
+      BLOCK_CONFIRMATIONS_THRESHOLD: "1"
+      CHECK_SUBMIT_RESULT_INTERVAL: "20"
+      CHECK_COLLECTION_INTERVAL: "30"
+      CHECK_COLLECT_REFUND_INTERVAL: "30"
+      CHECK_AUTHORIZE_REFUND_INTERVAL: "30"
+      SEED_ONLY_IF_EMPTY: "true"
+      SEED_V1_LEGACY: "false"
+      BLOCKFROST_API_KEY_PREPROD: ${MASUMI_BLOCKFROST_PREPROD:-}
+      BLOCKFROST_API_KEY_MAINNET: ${MASUMI_BLOCKFROST_MAINNET:-}
+      PURCHASE_WALLET_PREPROD_MNEMONIC: ${MASUMI_PURCHASING_PREPROD:-}
+      SELLING_WALLET_PREPROD_MNEMONIC: ${MASUMI_SELLING_PREPROD:-}
+      PURCHASE_WALLET_MAINNET_MNEMONIC: ${MASUMI_PURCHASING_MAINNET:-}
+      SELLING_WALLET_MAINNET_MNEMONIC: ${MASUMI_SELLING_MAINNET:-}
+    ports: ["127.0.0.1:3001:3001"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped

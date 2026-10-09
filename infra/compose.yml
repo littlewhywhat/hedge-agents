@@ -1,0 +1,23 @@
+name: hedge-agents
+
+services:
+  postgres:
+    container_name: hedge-agents-postgres
+    image: docker.io/library/postgres:17-alpine
+    environment:
+      POSTGRES_USER: hedge_owner
+      POSTGRES_DB: hedge
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run uv run python -m infra.manage init first}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-55432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hedge_owner -d hedge"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+    restart: unless-stopped
+
+volumes:
+  postgres-data:

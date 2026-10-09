@@ -9,7 +9,7 @@ The spec that implementation follows is:
 - [docs/DECISIONS.md](docs/DECISIONS.md) — what changed from the first draft of this file, and why.
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — processes, wallets, money, trading, allocation, data, web, failures, phases.
 
-Where this file and those two disagree, the docs win. The numbers below are the corrected ones.
+Where this file and those two disagree, the docs win. Design-review corrections were applied on 9 October 2026. Non-atomic Cardano-Solana transfers are accepted; durable recovery is required. The architecture's section 16 defines implementation acceptance tests, not tests already delivered by this documentation-only repository.
 
 ## 1. What we're building
 
@@ -42,13 +42,13 @@ Checked 8 October 2026. Evidence and the rejected alternatives are in [docs/DECI
 | D1 | Where trading happens | Solana mainnet via Jupiter Swap v2, for all four markets | Kept. Mints are verified; see section 5. |
 | D2 | Networks | Two environments that never mix. **Preprod:** Masumi Preprod, tUSDM, Solana devnet, protocol wiring only. **Mainnet:** Masumi mainnet, USDCx, Solana mainnet, real PnL. | Preprod cannot prove profit. Devnet Jupiter does not have these markets. USDCx is Circle xReserve, live since 27 Feb 2026. |
 | D3 | Budget transfers | Cardano x402 `exact`, `assetTransferMethod: "default"` (wallet to wallet), via a small Node facilitator. About one block. No Masumi fee. | The Payment Service and the Python SDK do not expose Cardano x402. Their `/x402` API is Base. The escrow variant of x402 cannot be completed by our payment-service node, so it is forbidden for capital. |
-| D4 | Paid services | MIP-003 escrow on the **V2** contract, price = the flat fee only. Shortest unlock is about 45 minutes. Our REST client sets those deadlines. | V2's fee rate is 0 today (`feeRatePermille: 0`). Docs still say 5% of the price. Keeping capital out of the price is what stops a future 5% from skimming it. There is no 1.8 ADA constant. The SDK's 12h/24h deadlines are not used. |
-| D5 | Gateway role | Inventory only: `deposit_to_solana` and `withdraw_to_cardano`. Traders swap themselves. Sends the other chain only after the inbound payment has one confirmation. | Kept. Escrow around every swap is still too slow for a $100 book, even without the old fee figure. |
+| D4 | Paid services | MIP-003 V2, flat fee only. Normal unlock minimum about 30 minutes, buffered default 31; external-dispute minimum about 45. Our REST client sends the required `supportedPaymentSourceIndex`. | V2 fee rate is 0 today. Capital is never the selling price. SDK deadline defaults are not used; purchase reuses the persisted returned terms. |
+| D5 | Gateway role | Reserved inventory exchange with durable `deposit_to_solana` / `withdraw_to_cardano` intents. Verify and claim the confirmed source receipt once before payout. | Non-atomic delivery is accepted. Timeouts require reconciliation, not a duplicate payout or an automatic refund. |
 | D6 | Who places trades | Each trader signs its own Jupiter swaps from its own Solana wallet | Kept. Allowlisted mints. Limits in section 8. |
-| D7 | Who decides allocation | Deterministic code in the fund runtime. An LLM objection applies only when it names a rule the code can recompute. It cannot raise its own weight. | A trader that can edit weights will argue for itself. The old 10-point cap plus a 2-round cooldown made the phase 2 demo impossible. |
-| D8 | Stack | Python 3.11. `masumi` SDK for the MIP-003 HTTP shell only. Cardano keys in the Payment Service and the facilitator. Solana keys only in trader and gateway processes. | The SDK is not a wallet and not an x402 client. |
+| D7 | Who decides allocation | Deterministic bounded projection of flow-adjusted performance. Hard-cap repair outranks ordinary movement smoothing. Verified objections name rules, never proposed weights. | Clip/renormalize does not enforce all constraints; infeasible policies must be rejected or visibly blocked. |
+| D8 | Stack | Python 3.11; Masumi SDK as HTTP shell, Postgres for durable state. Facilitator owns capital keys; Payment Service owns separate purchasing/selling keys. Solana keys stay with their signers. | Neither SDK memory nor scheduler-only serialization is a durable money/recovery contract. |
 
-**Fallback if the x402 facilitator is not signing on demo day:** `POST /wallet/transfer-funds` on the Payment Service (plain Cardano tx, minimum 2 ADA, admin key). The audit labels those rows as plain transfers, not escrow. Moving the budget on Solana and only hashing the decision into a Masumi job does **not** meet the requirement that the payments themselves go through Masumi.
+**Fallback requires exclusive ownership handoff:** halt capital work, stop the facilitator, resolve its attempts, then import capital wallets as purchasing-only Payment Service wallets and use the operator's `POST /wallet/transfer-funds` (minimum 2 ADA plus tokens). Pending attempts block the handoff. Reverse the handoff before restarting the facilitator. Audit these as plain transfers, not escrow. Moving agent budgets on Solana and merely hashing the decisions does not meet the Masumi payment requirement.
 
 ## 3. Architecture
 
@@ -85,40 +85,42 @@ flowchart LR
   api --> jup
 ```
 
-**Each trader** has a Masumi registry entry, a Cardano hot wallet (USDCx or tUSDM, plus ADA for fees and a 5 ADA collateral UTxO), and a Solana wallet (USDC, the one allowlisted token, a little SOL). The fund runtime is the only scheduler. The trader re-checks limits before it signs.
+**Each trader** has a Masumi registry entry, three distinct Cardano wallets (capital, purchasing, selling), and one Solana wallet. The gateway has the same key-role separation: fifteen Cardano wallets and five Solana wallets in the full configuration. Only purchasing/selling wallets need script collateral; all wallets need role-appropriate fee float. Fund-owned purchasing stablecoin is a separately tracked fee reserve. The runtime schedules new trading/allocations; signers enforce durable per-wallet reservations and re-check limits before signing.
 
 **The gateway** holds USDCx on Cardano and USDC on Solana, funded by us before the demo. Wanchain's Cardano route has been down since the 20 July 2026 exploit. xReserve mint is about 15–25 minutes and the burn back is about 2 hours, so restocking is manual and not part of a trade.
 
-**Payment Service settings that matter:** V2 only, and poll intervals at the code defaults (`CHECK_TX_INTERVAL` 20s, `BATCH_PAYMENT_INTERVAL` 30s, 1 confirmation). The upstream `.env.example` is 180s / 240s / 20 confirmations, which makes every payment look stuck. List calls must filter `Web3CardanoV2` or V2 rows are hidden. One payment-service instance hosts every agent's wallets.
+**Payment Service settings that matter:** V2 only, `CHECK_TX_INTERVAL=20`, `BATCH_PAYMENT_INTERVAL=30`, one confirmation. List calls filter `Web3CardanoV2`. Normal operation imports only purchasing/selling keys; capital keys belong exclusively to the facilitator. Every V2 payment selects the advertised `supportedPaymentSourceIndex`. Default request deadlines are +5/+16/+31/+46 minutes for pay-by/result/normal unlock/external dispute unlock, with the returned terms persisted and reused.
 
 ## 4. Money flows
 
 ### Mode 1
 
-1. **Fund.** The operator sends USDCx to the trader's Cardano address shown in the app. A browser wallet is optional.
-2. **Move to Solana.** The trader x402-pays the gateway (direct, not escrow) and puts its Solana address in the payment. It opens `deposit_to_solana` for the flat fee, with that tx id in the input. After one confirmation the gateway sends the same amount of USDC from inventory, minus the fee, and returns the Solana signature as the job result. The seller collects the fee from escrow about 45 minutes later. That wait does not block the swap.
+1. **Fund.** The operator sends USDCx to trader capital and funds its purchasing fee reserve. Both external contributions are recorded; internal reserve top-ups are not another deposit. A browser wallet is optional.
+2. **Move to Solana.** Prepare a gateway intent and atomically reserve inventory/quota. Open `deposit_to_solana` with its immutable terms and lock the flat fee from the purchasing wallet. Only then x402-send principal from trader capital and attach the persisted tx/output receipt. After verification and exclusive receipt claim, the gateway sends the full USDC principal, without subtracting the escrow fee again. Persist payout confirmation and the job result; seller collection after the normal unlock does not block trading.
 3. **Trade.** The trader swaps USDC and its allowlisted token on Jupiter, inside the limits in section 8.
-4. **Cash out.** Sell to USDC, x402 the gateway, gateway sends USDCx back, trader x402-pays the operator.
+4. **Cash out.** Sell to USDC, reserve `withdraw_to_cardano`, and lock its separate fee. Send SPL USDC to the gateway on Solana, then attach that receipt. After verification the gateway x402-sends USDCx back. Settle outstanding expense payables and x402-pay the remaining distribution to the operator. Solana principal is never described as a Cardano x402 send.
 
-If the gateway does not deliver, it x402-returns the capital (direct x402 has no script refund) and authorizes a MIP-003 refund of the fee.
+If delivery fails and no original payout can still land, return principal on its original chain: Cardano x402 for a deposit, Solana SPL USDC for a withdrawal. Authorize the MIP-003 fee refund separately. A timeout keeps the original intent and tx id pending/unknown. Reconcile it before any replacement or refund; late inbound capital is never silently abandoned. Architecture section 5 defines the state machine, proof validation, and crash recovery.
 
 ### Mode 2 — rebalance round
 
-1. A giving agent sells part of its position to USDC and withdraws it through the gateway.
+The initial split uses projected equal weights, without performance movement limits. Later rounds use the Cardano buffer first; only a larger move needs this full path:
+
+1. A giving agent sells part of its position to USDC and withdraws it through a reserved gateway intent.
 2. It x402-pays the receiving agent on Cardano. The tx id is the receipt. There is no `accept_budget` escrow job.
-3. The receiver deposits through the gateway and buys its token.
+3. The receiver deposits through its own reserved gateway intent and buys its token inside local limits.
 4. **Buffer:** each agent keeps about 15% of its share as stablecoin on Cardano, so a small move never touches Solana.
-5. Sends from one Cardano wallet are serialized. A second transaction from a stale UTxO fails.
+5. Persist the round, frozen policy/snapshots, and ordered idempotent legs before sending. Signers permit one unresolved attempt per wallet. Restart resumes remaining legs; no later performance round starts while this one is unresolved. Record target and actual settled weights separately.
 
 ### Cost per rebalance (replaces the old 1.8 ADA table)
 
 | Item | Cost |
 |---|---|
 | x402 stablecoin send | About 0.17 ADA in fees, plus about 1.17 ADA of min-UTxO that arrives with the token and comes back when the recipient spends it. Float, not a burned fee. |
-| Hot wallet | 5 ADA collateral, parked, plus about 10–20 ADA of fee float. |
-| Gateway escrow, fee only | Three script transactions. No protocol percentage on V2 today. Unlock about 45 minutes for the seller. Not on the trading critical path. |
+| Wallet reserves | Purchasing/selling wallets each need 5 ADA collateral plus fee float; capital wallets need separate fee/min-UTxO float. Budget by wallet, not just by agent. |
+| Gateway escrow, fee only | Three script transactions. No protocol percentage on V2 today. Normal unlock minimum about 30 minutes, default 31; external disputes have a roughly 45-minute minimum. Seller collection is not on the trading critical path. |
 | Gateway fee | A flat amount we set, small. Never a percentage of capital inside the escrow price. |
-| Jupiter, demo size ($100–500) | About 0.1% (SPYx, WETH, cbBTC) to about 0.3% (PAXG, TSLAx). Read it from the quote's USD in and USD out. The old 1.3% figure was a $100k clip, not a demo clip. |
+| Jupiter, demo size ($100–500) | Quote estimates about 0.1% (SPYx, WETH, cbBTC) to about 0.3% (PAXG, TSLAx). Realized execution cost uses confirmed net amounts at common-time marks, not a second debit of the quoted gap. |
 | Solana | Well under $0.01, plus Jupiter's priority fee on `/execute`. |
 | Latency of the money | One Cardano block for the x402, then a Solana confirmation. A full withdraw-pay-deposit-buy is minutes, not an escrow cycle. |
 
@@ -140,18 +142,20 @@ Mints checked on Jupiter on 8 Oct 2026. Full table in [docs/DECISIONS.md](docs/D
 USDC is `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`. Swaps are `GET /swap/v2/order` then `POST /swap/v2/execute` with an explicit `slippageBps` and a free Jupiter API key (keyless is 0.5 rps). The v6 quote API is gone. xStock value uses the scaled-UI multiplier (SPYx was about 1.0039); raw amount times price is wrong.
 
 **Loop, every few minutes, one agent per tick, started by the fund runtime:**
-1. Read the kill switch and the policy. Re-read balances.
-2. The LLM returns conviction from −1 to +1 and a reason, or the call fails and the agent holds.
-3. Code maps conviction to a target, checks the limits, and swaps.
-4. Log the decision, the quote, and the signature. Keep any signature Jupiter already attached; overwriting the list breaks JupiterZ routes.
+1. Read the kill switch, daily stop, and pinned active policy. Require fresh reconciled balances/marks and no unresolved wallet attempt. A daily stop uses deterministic sell-to-cash clips, without an LLM and without overriding the kill switch.
+2. The LLM returns finite conviction in [-1, 1]. Failure records `conviction: null`, `abstained: true`, hold/current target, then returns before quoting or signing. Valid zero conviction is neutral, not abstention.
+3. A valid response maps to a target. Re-check controls, policy, freshness, and limits immediately before signing. Keep every Jupiter signature except the taker slot being filled.
+4. Persist decision, signed bytes, signature, request id, and validity before broadcast. Reconcile uncertain execution before any new order. Record confirmed amounts and costs once; quote values remain estimates.
 
 **Job it sells:** `report` (value, return, volatility, drawdown, position, reasoning, and the audit head hash when this report is an anchor).
 
 ### Gateway
 
-- `deposit_to_solana(amount, x402_tx_id, solana_address)` → Solana signature.
-- `withdraw_to_cardano(amount, solana_tx_sig, cardano_address)` → Cardano tx id.
-- `/availability` is `unavailable` when inventory or the daily cap cannot cover the job, before a fee can lock.
+- `POST /transfers/prepare` reserves a unique intent with immutable direction, amount, and registered source/destination/refund wallets.
+- `deposit_to_solana(intent_id, terms)` returns the intent, source receipt, and Solana payout signature.
+- `withdraw_to_cardano(intent_id, terms)` returns the intent, source receipt, and Cardano payout tx id.
+- `POST /transfers/{intent_id}/receipt` attaches and verifies the source proof after fee lock and principal submission; job input is not mutated.
+- `/availability` reports unreserved inventory/quota; atomic preparation is the authoritative check. Reservations and protected refunds survive timeouts and UTC midnight.
 - Top-ups are manual.
 
 ### Deposit address (mode 2)
@@ -160,19 +164,15 @@ The user's deposit lands on one trader's Cardano address. The runtime does the f
 
 ## 6. Allocation protocol (mode 2)
 
-Each round, every 30 minutes in the demo, and only after at least an hour of snapshots. A slower cadence uses the tighter step below.
+Performance rounds run every 30 minutes after at least one hour of valid unit-NAV history. The initial equal-weight deployment is separate. Mode 1 has no weight allocator; Mode 2 requires at least three sleeves to show adaptive weights because two 50%-capped sleeves are necessarily 50/50.
 
-1. **Inputs.** The runtime reads `value_snapshots`. A `report` job is how a round gets anchored on Masumi, not how the score is fetched.
-2. **Score.** Decayed recent return divided by volatility, with a volatility floor. Non-positive scores do not receive new budget. If every score is near zero, weights do not change. The one-minute pitch does not use this formula. It uses the handwritten series in section 12.
-3. **Weights.** Proportional to score, then projected onto:
-   - Each agent stays between 10% and 50%.
-   - No move under 5 points.
-   - Maximum step 20 points in the demo, 10 points on the slow cadence.
-   - An agent that sent budget last round cannot send this round. One round, and only as a sender.
+1. **Inputs.** Pin the active policy and reconciled unit-NAV snapshots. `report` anchors the audit; it does not fetch a score. Missing history or unresolved prior legs blocks new performance allocation.
+2. **Score.** Decayed net unit return divided by volatility, with the interval, half-life, and floors in architecture section 7. Capital flows change units, not return. Zero-score sleeves do not receive in ordinary rounds. All-zero scores hold unless hard-bound repair is required. Replay instead uses section 12's handwritten series.
+3. **Weights.** Use the architecture's bounded-simplex projection, never clip/renormalize. Targets sum to one and obey 10% floors and caps at most 50%. Ordinary rounds enumerate hold/send/receive choices with 5-point minimum changes, a 20-point demo (10-point daily) maximum step, frozen paused weights, and one completed-round sender cooldown. Hard-cap repair overrides those smoothing constraints, but never the kill switch or no-receive daily stop. Reject infeasible policy caps; visibly block a later infeasible round.
 4. **Objections.** Each agent's LLM may submit `rule_breach` (`cap`, `cooldown`, `kill_switch`, `daily_stop`) or a comment. Code applies a breach only if it recomputes the same one. Comments are stored and do not move weights. Nothing in the objection is a proposed weight.
-5. **Execute.** Section 4. The round stores weights before and after, scores, objections, and every tx id.
+5. **Execute.** Persist and recover section 4's ordered legs, checking actual balances/fees/caps before each send. Store planned and settled weights, bound-repair overrides, scores, objections, policy version, and every receipt. Pending target weights are not achieved weights.
 
-A daily loss past the stop sells that agent toward USDC and blocks it from receiving budget. That is the emergency path. Policy from chat can tighten a cap, pause an agent, or lower risk. It cannot loosen the 50% cap, the 10% floor, or the daily stop.
+A daily loss over 5% of net unit NAV from UTC open latches the sleeve stopped for the day, targets cash, and blocks incoming budget. An internal budget send does not trigger that stop. Chat can tighten caps, pause discretionary activity, or lower risk; pending policy activates only at the next runtime boundary. A feasible cap change from 50% to 20% uses a logged 30-point hard repair, not an impossible ordinary 20-point step.
 
 ## 7. Backend and web app
 
@@ -182,38 +182,38 @@ Details, including column-level tables and the benchmark formulas, are in [docs/
 
 Reads the Payment Service (V2 filter), Solana RPC, and Jupiter Price v3. Writes policies, chat, and the kill switch. No chain keys.
 
-Tables: `agents`, `wallets`, `policies`, `decisions`, `masumi_jobs`, `transfers`, `trades`, `allocation_rounds`, `prices`, `value_snapshots`, `chat_messages`, `controls`, `events`. `events` is append-only (`prev_hash`, `hash`). The application role cannot update or delete it. The head hash is placed in a `report` result so Masumi stores `result_hash` on-chain.
+Tables: `agents`, `wallets`, `policies`, `decisions`, `masumi_jobs`, `transfer_intents`, `chain_attempts`, `transfers`, `trades`, `allocation_rounds`, `prices`, `accounting_entries`, `value_snapshots`, benchmark lots, `chat_messages`, `controls`, and `events`. Durable intents and chain-locator uniqueness prevent duplicate payout/accounting. `events` is append-only (`prev_hash`, `hash`); the application role cannot update/delete it. A `report` commits its head on Masumi through `result_hash`.
 
-Trading value is Cardano stablecoin + Solana USDC + token raw amount times the scaled-UI multiplier times the Jupiter price. ADA and SOL fee float are a fee line, not PnL. Min-UTxO moving between our wallets is float, not a loss. Gross, net, and fees (Cardano, Solana, gateway flat fee, swap gap) are all shown. "Masumi 5%" is not a fee line while V2's rate is 0.
+Equity includes trader capital/purchasing stablecoin, Solana USDC/tokens, principal receivables, and fee prepayments, less expense payables. Gateway inventory and seller revenue are outside the fund. Net PnL is `equity_end - equity_start - contributions + distributions`; gross adds recognized costs back. Internal budget flows cancel at fund scope. Actual network fees paid from excluded ADA/SOL float create a liability once; repayment is not a second expense. Service fees are recognized on delivery, not twice on lock and collection. Execution costs already reduce assets. Min-UTxO and refundable rent remain float. No "Masumi 5%" fee is invented while V2's rate is zero.
 
-Buy and hold, mode 1: units the deposit would have bought at arrival, marked forever. Mode 2 dashed line: starting weights grown by each agent's own trading, ignoring later transfers.
+Ownership units adjust on capital flows, while net NAV per unit measures performance and daily loss. Mode 1's benchmark tracks hypothetical token lots and proportional redemptions. Mode 2 fixes shadow ownership in actual sleeve NAV series, ignoring internal reallocations. Both account for withdrawals and disclose the actual-fill approximation.
 
 ### Web app (Next.js)
 
 Profile, audit (Cardanoscan, Solscan, Masumi job link, hashes), team chart, chat, controls. Poll the monitor. Mutating routes need one operator token. Preprod pages say the money is play money.
 
-Chat answers questions from the database. Instructions become a policy diff the operator confirms. The next round applies it.
+Chat answers from the database or proposes a policy diff. Confirmation validates feasibility and expected version, returning a pending policy or 422/409. The next runtime boundary activates it; the UI distinguishes pending policy, active limits, and actually settled weights.
 
 ## 8. Safety limits (in code, not prompts)
 
 - **Allowed tokens:** USDC plus one mint per agent. Anything else is rejected before a transaction is built.
 - **Trade limits:** max trade as a percent of value and an absolute USD cap, explicit `slippageBps`, one in-flight swap per agent, daily loss stop.
 - **Allocation limits:** section 6. The LLM does not get a path around them.
-- **Kill switch:** one authenticated call. Stops new trades and new allocation sends. Cash-out stays manual.
-- **Gateway caps:** per job and per day. No send until the inbound payment is confirmed.
-- **Keys:** Cardano mnemonics in the local env consumed by the Payment Service and the facilitator. Solana keys only in the signer processes. Never in prompts or logs.
-- **Size:** Preprod until one escrow cycle and one x402 send are done. Then a few dollars on mainnet. Then the demo budget.
+- **Kill switch:** check at admission and before signing. Stops new trades, allocation sends, and gateway admissions; existing funded obligations, reconciliation, and refunds remain recoverable. Cash-out is explicit, not automatic.
+- **Gateway caps:** atomic per-job/daily reservations, including pending prior-day work. No payout without verified, exclusively claimed source principal.
+- **Keys:** separate capital/purchasing/selling keys with one active signer each; only service-specific env entries reach each process. Solana keys stay in their signers. No admin keys or signed payloads in prompts/public logs.
+- **Size:** architecture section 16's offline/Preprod gates first, then an operator-authorized few-dollar mainnet qualification flow, then explicit arming of normal automation.
 
 ## 9. Phases
 
-The minimum demo is phases 0–2 plus the profile and audit pages. Cut in this order if time runs out: chat, then the dashed line, then the ETH and BTC agents. Gold, one xStock, the gateway, and the audit are enough to show the mechanism.
+The adaptive demo is phases 0-2 plus profile and audit. Cut chat, then the dashed line, then one crypto sleeve; retain at least three sleeves for changing Mode 2 weights. Cutting both ETH and BTC leaves a fixed 50/50 two-sleeve fund, suitable for funding/trading/audit but not adaptive allocation. Mode 1 remains a valid smaller live demonstration.
 
 ### Phase 0 — setup
 
 **Tasks:**
 - Monorepo as in section 3 of the architecture: `agents/` (common, trader, gateway, facilitator), `monitor/`, `web/`, `infra/`.
 - Our own `infra/docker-compose.yml`: Postgres, the Masumi payment service (upstream has a Dockerfile and no compose file), the facilitator. Admin key, `ENCRYPTION_KEY`, Blockfrost keys.
-- Fast poll intervals. V2. Register the gateway and one trader.
+- Disjoint capital, purchasing, and selling keys for the gateway and one trader; budget collateral/fee reserves by wallet. Fast poll intervals, V2 registration, required source-index selection, and persisted buffered deadlines.
 - Solana RPC and one devnet wallet per process, for ATA plumbing only.
 - LLM API key. Jupiter API key. No Financial Datasets key.
 
@@ -222,32 +222,32 @@ The minimum demo is phases 0–2 plus the profile and audit pages. Cut in this o
 ### Phase 1 — mode 1
 
 **Tasks:**
-1. Gateway deposit and withdraw, inventory checks, capital refund via x402, fee refund via MIP-003.
+1. Reserved gateway deposit/withdraw intents, receipt validation/deduplication, same-chain principal refunds, and separate MIP-003 fee refunds. Persist signed attempts and recover crashes/unknown outcomes.
 2. One trader (SPYx or PAXG), the loop, Jupiter swaps, limits, `report`.
 3. Funding and cash-out.
-4. Sampler, profile, audit.
-5. A few dollars on mainnet, then the demo budget ($100–250, not $50).
+4. Reconciled accounting, unit NAV, sampler, profile, audit. Test fees, cash-outs, and principal in transit before claiming PnL.
+5. Pass architecture section 16's relevant offline/Preprod gates, authorize the few-dollar mainnet qualification flow, then arm the demo budget ($100-250 per sleeve).
 
-**Done when:** fund → Solana → buy → sell → cash out, every step in the audit with explorer links, and on mainnet the net value matches the wallets within dust. That match is meaningless on Preprod.
+**Done when:** fund, convert, buy, sell, and cash out with every step audited. Mainnet wallets plus claims/liabilities reconcile within declared raw-unit dust, and the PnL identity includes contributions/distributions and every expense once. Preprod verifies plumbing and recovery, not a real stablecoin peg.
 
 ### Phase 2 — mode 2
 
 **Tasks:**
 1. Four traders from one codebase, each with its own wallets and registry entry.
 2. Deposit address and the first split, done by the runtime.
-3. Allocation as in section 6. Buffer first.
+3. Bounded projection, hard-repair precedence, and idempotent partial-round recovery as in section 6. Buffer first.
 4. Team chart with round markers.
 
-**Done when:** at least 3 live rounds; a strong agent gains share and later gives it back; every move is in the audit with its reason and tx links. The 20-point demo step and the one-round sender cooldown are what make this possible.
+**Done when:** three live rounds settle or record valid no-change reasons with actual weights and tx links. An offline three-round fixture proves a gain and give-back without changing the live score. Infeasible caps, stop restrictions, and partial-round restart pass the acceptance cases.
 
 ### Phase 3 — chat and strategy control
 
 **Tasks:**
-- Chat → policy diff → operator confirms → new policy version. Not a trader LLM writing weights.
+- Chat proposes a diff; version-checked confirmation creates a feasible pending policy; the runtime activates it at the next boundary. The trader LLM cannot write weights or adopt a pending version early.
 - Questions answered from the monitor.
 - Dashed no-reallocation line, defined in the architecture.
 
-**Done when:** "cap stocks at 20%" is visible in the next round's weights.
+**Done when:** a feasible "cap stocks at 20%" activates at the next boundary and is reflected in the next completed repair/round, including the 50%-to-20% test. Stale/infeasible requests and blocked settlement are visibly rejected or pending, not falsely reported as achieved.
 
 ### Phase 4 — demo hardening
 
@@ -256,6 +256,8 @@ The minimum demo is phases 0–2 plus the profile and audit pages. Cut in this o
 - Kill switch drilled once.
 - Gateway inventory topped up. No bridge hop during the demo.
 - A recorded walkthrough in case the network stalls on stage.
+
+Required gates for all phases are the architecture's section 16 cases: duplicate receipts, crash windows, late confirmations, original-chain refunds, fee/cash-flow identities, constrained allocation, LLM abstention, and last-moment safety checks. They must become automated implementation tests; checking in these documents does not complete a gate.
 
 ## 10. Demo script (about 3 min)
 
@@ -282,7 +284,7 @@ The series is replay-only. After the switch, live rounds use the return-over-vol
 
 ## 11. Checked before building
 
-Verified 8 Oct 2026 unless noted. Do not reopen these during the hackathon.
+External observations verified 8 Oct 2026 unless noted. The 9 October contract/accounting corrections above supersede older design assumptions; implementation acceptance gates remain open.
 
 - [x] Mints and demo-size liquidity: PAXG, SPYx and the other four xStocks, Wormhole WETH, cbBTC. See section 5. XAUt0, Wormhole WBTC, native WBTC, zBTC, and tBTC were looked at and are not defaults.
 - [x] x402 `assetTransferMethod: "masumi"` locks the V2 escrow and cannot be driven by the Payment Service. Direct (`default`) is the capital path. It does not charge 5%.
@@ -294,6 +296,10 @@ Verified 8 Oct 2026 unless noted. Do not reopen these during the hackathon.
 - [x] Hydra is implemented and is a 2-party channel we would have to host. Out of scope.
 
 Still true as operating constraints, not open research: export Cardano mnemonics to the env file before the first payment-service restart (`ENCRYPTION_KEY` loss bricks the node's copy), and do not copy `.env.example` poll intervals.
+
+- [ ] Implement and pass architecture section 16's offline accounting, allocation, idempotency, and safety cases.
+- [ ] Pass the real Preprod/devnet adapter and recovery checks with separate signer wallets.
+- [ ] Reconcile the bounded mainnet qualification flow before explicitly enabling normal automation.
 
 ## 12. References
 

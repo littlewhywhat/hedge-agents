@@ -1,0 +1,23 @@
+name: Verify
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - run: sudo apt-get update && sudo apt-get install -y podman
+      - run: uv sync --all-groups --frozen
+      - run: npm --prefix web ci
+      - run: npm --prefix agents/facilitator ci
+      - run: uv run python -m infra.manage init
+      - run: uv run python -m infra.manage postgres
+      - run: uv run python -m infra.manage init-db
+      - run: uv run python -m infra.setup verify
