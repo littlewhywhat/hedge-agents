@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 
 from agents.common.models import BookState, Event, ReplayFrame
 from runtime.marketdata import HISTORICAL_FILES, load_historical_cache, load_historical_files, price_frames
-from runtime.replay import PaperRuntime, SCORES, store_tape
+from runtime.replay import AGENTS, PaperRuntime, store_tape
 
 
 def fixture_prices():
@@ -19,7 +19,7 @@ def test_every_frame_reconciles_to_recorded_paper_trades():
     frames, trades, headlines = PaperRuntime().run(fixture_prices())
     assert all(set(frame["agents"]) == set(HISTORICAL_FILES) for frame in frames)
     assert any(trade["agent"] == "gold" and trade["kind"] == "trade" for trade in trades)
-    holdings = dict.fromkeys(SCORES, 0)
+    holdings = dict.fromkeys(AGENTS, 0)
     for frame in frames:
         for trade in (row for row in trades if row["frame_id"] == frame["id"] and row["kind"] == "trade"):
             amount = Decimal(trade["amount_usd"])
@@ -36,12 +36,9 @@ def test_every_frame_reconciles_to_recorded_paper_trades():
             equity += actual
         assert abs(equity - Decimal(frame["equity"])) < Decimal("1e-18")
         assert Decimal(frame["net_pnl"]) == Decimal(frame["equity"]) - 900
-    assert len(headlines) == 1
-    shock = next(frame for frame in frames if frame["shock"])
-    assert Decimal(shock["agents"]["btc"]["token_value"]) < Decimal(".01")
-    assert Decimal(shock["target_weights"]["btc"]) <= Decimal(shock["weights_before"]["btc"])
-    if shock["round_kind"] != "bound_repair":
-        assert Decimal(shock["weights_before"]["btc"]) - Decimal(shock["target_weights"]["btc"]) <= Decimal(".20")
+        assert set(frame["requests"]) == set(AGENTS)
+    assert frames[-1]["requests"]["eth"]["action"] == "more"
+    assert Decimal(frames[-1]["agents"]["eth"]["weight"]) > Decimal("0.25")
 
 
 def test_tape_storage_never_writes_live_events(database):
@@ -159,17 +156,31 @@ def test_local_cache_reproduces_exact_frame_prices(tmp_path):
     assert price_frames(load_historical_cache(cache), count=3) == price_frames(data, count=3)
 
 
-def test_daily_frames_step_one_day_and_keep_twelve_score_decisions():
+def test_daily_frames_let_the_leading_sleeve_request_load():
     start = datetime(2026, 7, 1, tzinfo=timezone.utc)
-    frames = [{"time": (start + timedelta(days=index)).isoformat(), "prices": {"btc": str(100000 + index * 100), "eth": "3000", "gold": "3000", "stocks": "6000"}} for index in range(23)]
-    stored, trades, _headlines = PaperRuntime().run(frames)
+    frames = [{"time": (start + timedelta(days=index)).isoformat(), "prices": {"btc": str(100000 + index * 100), "eth": "3000", "gold": "3000", "stocks": "6000"}} for index in range(8)]
+    stored, _trades, _headlines = PaperRuntime().run(frames)
     times = [datetime.fromisoformat(row["time"]) for row in stored]
     assert all(times[index + 1] - times[index] == timedelta(days=1) for index in range(len(times) - 1))
-    decisions = {index * 22 // 11 for index in range(12)}
-    assert {row["frame_id"] for row in trades} <= decisions
-    assert stored[1]["round_kind"] == "hold"
-    assert stored[1]["scores"] == stored[0]["scores"]
+    assert stored[1]["requests"]["btc"]["action"] == "more"
+    assert Decimal(stored[1]["target_weights"]["btc"]) > Decimal(stored[1]["weights_before"]["btc"])
     assert Decimal(stored[1]["agents"]["btc"]["token_value"]) != Decimal(stored[0]["agents"]["btc"]["token_value"])
+
+
+def test_daily_loss_sells_toward_cash_and_blocks_incoming_load():
+    start = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    frames = []
+    for index in range(4):
+        btc = "100000" if index < 3 else "90000"
+        frames.append({"time": (start + timedelta(days=index)).isoformat(), "prices": {"btc": btc, "eth": "3000", "gold": "3000", "stocks": "6000"}})
+    stored, _trades, headlines = PaperRuntime().run(frames)
+    shock = stored[-1]
+    assert shock["shock"] == ["btc"]
+    assert shock["requests"]["btc"]["action"] == "release"
+    assert Decimal(shock["agents"]["btc"]["token_value"]) < Decimal(".01")
+    assert Decimal(shock["target_weights"]["btc"]) <= Decimal(shock["weights_before"]["btc"])
+    assert Decimal(shock["weights_before"]["btc"]) - Decimal(shock["target_weights"]["btc"]) <= Decimal("0.10")
+    assert headlines[-1]["agent"] == "btc"
 
 
 def test_gold_prices_are_required_for_the_four_asset_replay():

@@ -6,19 +6,73 @@ from pathlib import Path
 from sqlalchemy import delete
 
 from agents.common.accounting import Book, money
-from agents.common.allocation import allocate
+from agents.common.allocation import AllocationBlocked, allocate
 from agents.common.config import Settings
 from agents.common.db import Database
 from agents.common.models import ReplayFrame, ReplayHeadline, ReplayTrade
 from runtime.marketdata import load_historical_cache, load_historical_files, price_frames
 
 
-SCORES = {
-    "btc": ["0.80", "0.84", "0.87", "0.89", "0.90", "0.42", "0.47", "0.55", "0.59", "0.68", "0.72", "0.76"],
-    "eth": ["0.62", "0.66", "0.62", "0.67", "0.66", "0.88", "0.88", "0.89", "0.84", "0.82", "0.81", "0.79"],
-    "gold": ["0.58", "0.59", "0.61", "0.62", "0.64", "0.72", "0.73", "0.74", "0.72", "0.73", "0.75", "0.76"],
-    "stocks": ["0.55", "0.55", "0.60", "0.61", "0.65", "0.65", "0.67", "0.69", "0.65", "0.62", "0.60", "0.65"],
-}
+AGENTS = ("btc", "eth", "gold", "stocks")
+LOOKBACK = 5
+LOAD_STEP = Decimal("0.10")
+DAILY_LOSS = Decimal("-0.05")
+
+
+def percent_text(value: Decimal) -> str:
+    return f"{(value * 100).quantize(Decimal('0.01'))}%"
+
+
+def trailing_return(series: list, days: int) -> Decimal:
+    if len(series) < 2:
+        return Decimal(0)
+    start = money(series[max(0, len(series) - 1 - days)])
+    end = money(series[-1])
+    if start <= 0:
+        return Decimal(0)
+    return end / start - 1
+
+
+def load_requests(histories: dict[str, list], stopped: set[str]) -> dict[str, dict]:
+    window = {name: trailing_return(histories[name], LOOKBACK) for name in histories}
+    eligible = {name: value for name, value in window.items() if name not in stopped and value > 0}
+    leader = None
+    if eligible:
+        best = max(eligible.values())
+        leaders = [name for name, value in eligible.items() if value == best]
+        if len(leaders) == 1:
+            leader = leaders[0]
+    requests = {}
+    for name, value in window.items():
+        shown = percent_text(value)
+        if name in stopped:
+            action = "release"
+            reason = f"Daily price loss is {percent_text(trailing_return(histories[name], 1))}. Cash target, no incoming load."
+        elif name == leader:
+            action = "more"
+            reason = f"Five-day return {shown} leads the other sleeves. Requesting load."
+        elif value < 0:
+            action = "release"
+            reason = f"Five-day return {shown} is negative. Releasing load."
+        else:
+            action = "hold"
+            reason = f"Five-day return {shown} does not lead. Holding the current sleeve."
+        requests[name] = {"action": action, "return": str(value), "reason": reason}
+    return requests
+
+
+def request_scores(before: dict[str, Decimal], requests: dict[str, dict], stopped: set[str]) -> dict[str, Decimal]:
+    scores = {}
+    for name, weight in before.items():
+        if name in stopped:
+            scores[name] = Decimal(0)
+        elif requests[name]["action"] == "more":
+            scores[name] = weight + LOAD_STEP
+        elif requests[name]["action"] == "release":
+            scores[name] = max(Decimal(0), weight - LOAD_STEP)
+        else:
+            scores[name] = weight
+    return scores
 
 
 def strings(values):
@@ -28,12 +82,12 @@ def strings(values):
 class PaperRuntime:
     def __init__(self, initial: Decimal = Decimal(900)):
         self.initial = initial
-        self.books = {name: Book() for name in SCORES}
-        self.holdings = dict.fromkeys(SCORES, 0)
+        self.books = {name: Book() for name in AGENTS}
+        self.holdings = dict.fromkeys(AGENTS, 0)
         self.trades, self.frames, self.headlines = [], [], []
         self.frame_id, self.time, self.prices = 0, "", {}
         self.cooldown = set()
-        self.shadow = {name: initial / len(SCORES) for name in SCORES}
+        self.shadow = {name: initial / len(AGENTS) for name in AGENTS}
 
     def record(self, name, kind, **body):
         row = {"id": len(self.trades) + 1, "frame_id": self.frame_id, "time": self.time, "agent": name, "kind": kind, **body}
@@ -138,15 +192,15 @@ class PaperRuntime:
                 break
 
     def run(self, frames: list[dict], provenance: dict | None = None):
-        score_count = len(SCORES["btc"])
-        if len(frames) < score_count:
-            raise ValueError("The authored score tape requires at least twelve frames")
+        if len(frames) < 2:
+            raise ValueError("Replay needs at least two frames")
         if any(set(frame["prices"]) != set(self.books) for frame in frames):
             raise ValueError("Every replay frame must contain BTC, ETH, gold, and SPYx prices")
-        decisions = {score_index * (len(frames) - 1) // (score_count - 1): score_index for score_index in range(score_count)}
-        applied_score = 0
+        history = {name: [] for name in AGENTS}
         for index, prices in enumerate(frames):
             self.frame_id, self.time, self.prices = index, prices["time"], prices["prices"]
+            for name in AGENTS:
+                history[name].append(self.prices[name])
             for name, book in self.books.items():
                 if index == 0:
                     proof = self.record(name, "funding", amount_usd=str(self.initial / len(self.books)))
@@ -156,34 +210,34 @@ class PaperRuntime:
                     book.apply("mark", Decimal(self.holdings[name]) * money(self.prices[name]) / 100_000_000, f"mark:{index}:{name}", source="token")
             total = sum(book.equity for book in self.books.values())
             before = {name: book.equity / total for name, book in self.books.items()}
-            score_index = decisions.get(index)
-            if score_index is None:
-                scores = {name: money(series[applied_score]) for name, series in SCORES.items()}
-                stopped = set()
-                targets, kind, overrides, reason = before, "hold", [], "Daily close. Allocation unchanged."
-            else:
-                applied_score = score_index
-                scores = {name: money(series[score_index]) for name, series in SCORES.items()}
-                stopped = {name for name, series in SCORES.items() if score_index and money(series[score_index - 1]) - scores[name] > Decimal(".20")}
+            stopped = {name for name in AGENTS if trailing_return(history[name], 1) <= DAILY_LOSS}
+            requests = load_requests(history, stopped)
+            scores = request_scores(before, requests, stopped)
+            asked = any(request["action"] != "hold" for request in requests.values())
+            if index == 0 or stopped or asked:
                 for name in stopped:
                     self.exposure(name, True)
-                result = allocate(before, scores, stopped=stopped, cooldown=self.cooldown, initial=index == 0)
-                if index:
-                    self.rebalance(result.weights, before)
-                for name in self.books:
-                    self.exposure(name, name in stopped)
-                self.cooldown = {name for name in before if result.weights[name] < before[name] - Decimal("1e-9")}
-                targets, kind, overrides, reason = result.weights, result.kind, result.overrides, result.reason
+                try:
+                    result = allocate(before, scores, stopped=stopped, cooldown=self.cooldown, initial=index == 0, max_step=LOAD_STEP)
+                    if index:
+                        self.rebalance(result.weights, before)
+                    for name in self.books:
+                        self.exposure(name, name in stopped)
+                    targets, kind, overrides, reason = result.weights, result.kind, result.overrides, result.reason
+                    self.cooldown = {name for name in before if targets[name] < before[name] - Decimal("1e-9")}
+                except AllocationBlocked as error:
+                    targets, kind, overrides, reason = before, "hold", [], str(error)
+            else:
+                targets, kind, overrides, reason = before, "hold", [], "No sleeve requested load."
             equity = sum(book.equity for book in self.books.values())
             costs = {kind: sum(book.costs[kind] for book in self.books.values()) for kind in ("execution", "network", "service", "impairment")}
             benchmark = sum(self.shadow[name] * (book.nav or Decimal(0)) for name, book in self.books.items())
             agents = {name: {"equity": str(book.equity), "weight": str(book.equity / equity), "token_raw": str(self.holdings[name]), "token_value": str(book.assets["token"]), "capital": str(book.assets["capital"]), "usdc": str(book.assets["usdc"]), "purchasing": str(book.assets["purchasing"]), "payable": str(book.payable), "units": str(book.units), "nav": str(book.nav), "net_pnl": str(book.net_pnl), "score": str(scores[name]), "stopped": name in stopped} for name, book in self.books.items()}
             objections = [{"agent": name, "type": "rule_breach" if name in stopped else "comment", "rule": "daily_stop" if name in stopped else None, "applied": name in stopped, "text": "No incoming allocation; cash target" if name in stopped else "No verified rule breach"} for name in self.books]
-            frame = {"id": index, "time": self.time, "prices": self.prices, "source_times": prices.get("source_times", {}), "scores": strings(scores), "weights_before": strings(before), "target_weights": strings(targets), "settled_weights": {name: row["weight"] for name, row in agents.items()}, "agents": agents, "equity": str(equity), "contributions": str(self.initial), "distributions": "0", "net_pnl": str(equity - self.initial), "gross_pnl": str(equity - self.initial + sum(costs.values())), "fees": strings(costs), "benchmark": str(benchmark), "round_kind": kind, "overrides": overrides, "reason": reason, "shock": sorted(stopped), "objections": objections, "trade_count": len([row for row in self.trades if row["kind"] == "trade"]), "provenance": provenance or {"source": "test fixture"}, "score_source": "Handwritten replay-only score series", "cost_assumptions": {"execution_bps": 10, "gateway_fee_usd": "0.10", "network_fee_usd": "0.04"}}
+            frame = {"id": index, "time": self.time, "prices": self.prices, "source_times": prices.get("source_times", {}), "scores": strings(scores), "requests": requests, "weights_before": strings(before), "target_weights": strings(targets), "settled_weights": {name: row["weight"] for name, row in agents.items()}, "agents": agents, "equity": str(equity), "contributions": str(self.initial), "distributions": "0", "net_pnl": str(equity - self.initial), "gross_pnl": str(equity - self.initial + sum(costs.values())), "fees": strings(costs), "benchmark": str(benchmark), "round_kind": kind, "overrides": overrides, "reason": reason, "shock": sorted(stopped), "objections": objections, "trade_count": len([row for row in self.trades if row["kind"] == "trade"]), "provenance": provenance or {"source": "test fixture"}, "score_source": "Sleeve load requests from each asset's own return", "cost_assumptions": {"execution_bps": 10, "gateway_fee_usd": "0.10", "network_fee_usd": "0.04", "load_step": str(LOAD_STEP), "lookback_days": LOOKBACK}}
             self.frames.append(frame)
-            if stopped:
-                name = sorted(stopped)[0]
-                self.headlines.append({"id": len(self.headlines) + 1, "frame_id": index, "agent": name, "title": "Bitcoin score shock", "text": f"Authored score {SCORES[name][score_index - 1]} to {SCORES[name][score_index]}. Cash target; incoming budget blocked.", "caption_only": True})
+            for name in sorted(stopped):
+                self.headlines.append({"id": len(self.headlines) + 1, "frame_id": index, "agent": name, "title": "Daily stop", "text": requests[name]["reason"], "caption_only": True})
         return self.frames, self.trades, self.headlines
 
 
@@ -220,7 +274,7 @@ def main():
         cache.write_text(json.dumps(bars, separators=(",", ":")), encoding="utf-8")
     for name, details in bars["files"].items():
         print(f"{name}: {details['accepted_records']} accepted observations from {details['name']}; excluded {details['skipped']}")
-    print(f"Stored {len(frames)} replay frames, {len(trades)} paper records, and {len(headlines)} authored shock caption. Live ledger unchanged.")
+    print(f"Stored {len(frames)} replay frames, {len(trades)} paper records, and {len(headlines)} daily-stop captions. Live ledger unchanged.")
 
 
 if __name__ == "__main__":

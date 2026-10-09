@@ -29,8 +29,9 @@ x-trader-env: &trader-env
   DATABASE_URL: postgresql+psycopg://hedge_signer:${SIGNER_DATABASE_PASSWORD}@postgres:5432/hedge
   BLOCKFROST_PROJECT_ID: ${BLOCKFROST_PROJECT_ID:-}
   JUPITER_API_KEY: ${JUPITER_API_KEY:-}
+  LLM_API_URL: ${LLM_API_URL:-https://generativelanguage.googleapis.com/v1beta/openai}
   LLM_API_KEY: ${LLM_API_KEY:-}
-  LLM_MODEL: ${LLM_MODEL:-gpt-4.1-mini}
+  LLM_MODEL: ${LLM_MODEL:-gemini-3.1-flash-lite}
 
 x-trader: &trader
   <<: *python

@@ -57,9 +57,9 @@ class Settings(BaseSettings):
     solana_rpc_url: str = "https://api.devnet.solana.com"
     devnet_usdc_mint: str = ""
     blockfrost_project_id: SecretStr = SecretStr("")
-    llm_api_url: str = "https://api.openai.com/v1"
+    llm_api_url: str = "https://generativelanguage.googleapis.com/v1beta/openai"
     llm_api_key: SecretStr = SecretStr("")
-    llm_model: str = "gpt-4.1-mini"
+    llm_model: str = "gemini-3.1-flash-lite"
     max_trade_usd: int = 100
     gateway_per_job_usd: int = 200
     gateway_daily_usd: int = 1000
