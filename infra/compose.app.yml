@@ -1,0 +1,134 @@
+x-public: &public
+  HEDGE_SERVICE_PROCESS: "1"
+  ENVIRONMENT: ${ENVIRONMENT:-preprod}
+  CARDANO_NETWORK: ${CARDANO_NETWORK:-preprod}
+  SOLANA_CLUSTER: ${SOLANA_CLUSTER:-devnet}
+  ACTIVE_AGENTS: ${ACTIVE_AGENTS:-btc,eth,gold,stocks}
+  FUND_MODE: ${FUND_MODE:-2}
+  SOLANA_RPC_URL: ${SOLANA_RPC_URL:-https://api.devnet.solana.com}
+  DEVNET_USDC_MINT: ${DEVNET_USDC_MINT:-}
+  SERVICE_TOKEN_HASHES_JSON: ${SERVICE_TOKEN_HASHES_JSON}
+  PAYMENT_SERVICE_URL: http://payment-service:3001/api/v1
+  FACILITATOR_URL: http://facilitator:8084
+  GATEWAY_URL: http://gateway:8082
+  TRADER_URLS_JSON: '{"btc":"http://trader-btc:8100","eth":"http://trader-eth:8100","gold":"http://trader-gold:8100","stocks":"http://trader-stocks:8100"}'
+  ADA_PRICE_MINT: ${ADA_PRICE_MINT:-}
+  XSTOCKS_ELIGIBLE: ${XSTOCKS_ELIGIBLE:-false}
+
+x-python: &python
+  build:
+    context: ..
+    dockerfile: infra/python.Containerfile
+  depends_on:
+    postgres:
+      condition: service_healthy
+  restart: unless-stopped
+
+x-trader-env: &trader-env
+  <<: *public
+  DATABASE_URL: postgresql+psycopg://hedge_signer:${SIGNER_DATABASE_PASSWORD}@postgres:5432/hedge
+  BLOCKFROST_PROJECT_ID: ${BLOCKFROST_PROJECT_ID:-}
+  JUPITER_API_KEY: ${JUPITER_API_KEY:-}
+  LLM_API_KEY: ${LLM_API_KEY:-}
+  LLM_MODEL: ${LLM_MODEL:-gpt-4.1-mini}
+
+x-trader: &trader
+  <<: *python
+  command: ["uvicorn", "agents.trader.app:app", "--host", "0.0.0.0", "--port", "8100"]
+
+services:
+  monitor:
+    <<: *python
+    environment:
+      <<: *public
+      DATABASE_URL: postgresql+psycopg://hedge_app:${APP_DATABASE_PASSWORD}@postgres:5432/hedge
+      OPERATOR_TOKEN: ${OPERATOR_TOKEN}
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
+      BLOCKFROST_PROJECT_ID: ${BLOCKFROST_PROJECT_ID:-}
+      JUPITER_API_KEY: ${JUPITER_API_KEY:-}
+      PAYMENT_READ_KEY: ${PAYMENT_READ_KEY:-}
+    ports: ["127.0.0.1:8000:8000"]
+  runtime:
+    <<: *python
+    command: ["python", "-m", "runtime.main"]
+    environment:
+      <<: *public
+      DATABASE_URL: postgresql+psycopg://hedge_app:${APP_DATABASE_PASSWORD}@postgres:5432/hedge
+      SERVICE_TOKEN: ${RUNTIME_SERVICE_TOKEN}
+      BLOCKFROST_PROJECT_ID: ${BLOCKFROST_PROJECT_ID:-}
+      JUPITER_API_KEY: ${JUPITER_API_KEY:-}
+      PAYMENT_READ_KEY: ${PAYMENT_READ_KEY:-}
+  gateway:
+    <<: *python
+    command: ["uvicorn", "agents.gateway.app:app", "--host", "0.0.0.0", "--port", "8082"]
+    environment:
+      <<: *public
+      AGENT_ID: gateway
+      DATABASE_URL: postgresql+psycopg://hedge_signer:${SIGNER_DATABASE_PASSWORD}@postgres:5432/hedge
+      SERVICE_TOKEN: ${GATEWAY_SERVICE_TOKEN}
+      SOLANA_PRIVATE_KEY: ${GATEWAY_SOLANA_PRIVATE_KEY:-}
+      BLOCKFROST_PROJECT_ID: ${BLOCKFROST_PROJECT_ID:-}
+      PAYMENT_AGENT_KEY: ${GATEWAY_PAYMENT_KEY:-}
+      PAYMENT_READ_KEY: ${GATEWAY_PAYMENT_KEY:-}
+  facilitator:
+    build:
+      context: ..
+      dockerfile: agents/facilitator/Containerfile
+    environment:
+      <<: *public
+      DATABASE_URL: postgresql://hedge_signer:${SIGNER_DATABASE_PASSWORD}@postgres:5432/hedge
+      BLOCKFROST_PROJECT_ID: ${BLOCKFROST_PROJECT_ID:-}
+      BTC_CAPITAL_MNEMONIC: ${BTC_CAPITAL_MNEMONIC:-}
+      ETH_CAPITAL_MNEMONIC: ${ETH_CAPITAL_MNEMONIC:-}
+      GOLD_CAPITAL_MNEMONIC: ${GOLD_CAPITAL_MNEMONIC:-}
+      STOCKS_CAPITAL_MNEMONIC: ${STOCKS_CAPITAL_MNEMONIC:-}
+      GATEWAY_CAPITAL_MNEMONIC: ${GATEWAY_CAPITAL_MNEMONIC:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+  trader-btc:
+    <<: *trader
+    environment:
+      <<: *trader-env
+      AGENT_ID: btc
+      SERVICE_TOKEN: ${BTC_SERVICE_TOKEN}
+      SOLANA_PRIVATE_KEY: ${BTC_SOLANA_PRIVATE_KEY:-}
+      PAYMENT_AGENT_KEY: ${BTC_PAYMENT_KEY:-}
+      PAYMENT_READ_KEY: ${BTC_PAYMENT_KEY:-}
+  trader-eth:
+    <<: *trader
+    environment:
+      <<: *trader-env
+      AGENT_ID: eth
+      SERVICE_TOKEN: ${ETH_SERVICE_TOKEN}
+      SOLANA_PRIVATE_KEY: ${ETH_SOLANA_PRIVATE_KEY:-}
+      PAYMENT_AGENT_KEY: ${ETH_PAYMENT_KEY:-}
+      PAYMENT_READ_KEY: ${ETH_PAYMENT_KEY:-}
+  trader-gold:
+    <<: *trader
+    environment:
+      <<: *trader-env
+      AGENT_ID: gold
+      SERVICE_TOKEN: ${GOLD_SERVICE_TOKEN}
+      SOLANA_PRIVATE_KEY: ${GOLD_SOLANA_PRIVATE_KEY:-}
+      PAYMENT_AGENT_KEY: ${GOLD_PAYMENT_KEY:-}
+      PAYMENT_READ_KEY: ${GOLD_PAYMENT_KEY:-}
+  trader-stocks:
+    <<: *trader
+    environment:
+      <<: *trader-env
+      AGENT_ID: stocks
+      SERVICE_TOKEN: ${STOCKS_SERVICE_TOKEN}
+      SOLANA_PRIVATE_KEY: ${STOCKS_SOLANA_PRIVATE_KEY:-}
+      PAYMENT_AGENT_KEY: ${STOCKS_PAYMENT_KEY:-}
+      PAYMENT_READ_KEY: ${STOCKS_PAYMENT_KEY:-}
+  web:
+    build:
+      context: ..
+      dockerfile: web/Containerfile
+    environment:
+      MONITOR_URL: http://monitor:8000
+    ports: ["127.0.0.1:3000:3000"]
+    depends_on: [monitor]
+    restart: unless-stopped
