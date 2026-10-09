@@ -159,6 +159,19 @@ def test_local_cache_reproduces_exact_frame_prices(tmp_path):
     assert price_frames(load_historical_cache(cache), count=3) == price_frames(data, count=3)
 
 
+def test_daily_frames_step_one_day_and_keep_twelve_score_decisions():
+    start = datetime(2026, 7, 1, tzinfo=timezone.utc)
+    frames = [{"time": (start + timedelta(days=index)).isoformat(), "prices": {"btc": str(100000 + index * 100), "eth": "3000", "gold": "3000", "stocks": "6000"}} for index in range(23)]
+    stored, trades, _headlines = PaperRuntime().run(frames)
+    times = [datetime.fromisoformat(row["time"]) for row in stored]
+    assert all(times[index + 1] - times[index] == timedelta(days=1) for index in range(len(times) - 1))
+    decisions = {index * 22 // 11 for index in range(12)}
+    assert {row["frame_id"] for row in trades} <= decisions
+    assert stored[1]["round_kind"] == "hold"
+    assert stored[1]["scores"] == stored[0]["scores"]
+    assert Decimal(stored[1]["agents"]["btc"]["token_value"]) != Decimal(stored[0]["agents"]["btc"]["token_value"])
+
+
 def test_gold_prices_are_required_for_the_four_asset_replay():
     frames = fixture_prices()
     frames[0]["prices"].pop("gold")

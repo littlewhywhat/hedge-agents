@@ -109,19 +109,24 @@ def load_historical_cache(cache: Path) -> dict:
     return data
 
 
-def price_frames(data: dict, count: int = 12) -> list[dict]:
-    if count < 2:
-        raise ValueError("Replay needs at least two frames")
+def price_frames(data: dict, count: int | None = 12) -> list[dict]:
     rows = {name: sorted((utc_timestamp(row["time"]), row["close"]) for row in series) for name, series in data["bars"].items()}
     if "btc" not in rows or any(not series for series in rows.values()):
         raise ValueError("Replay has missing historical observations")
     common_start = max(series[0][0] for series in rows.values())
     crypto = [row for row in rows["btc"] if row[0] >= common_start]
-    if len(crypto) < count:
-        raise ValueError("Not enough common completed daily observations for the replay frames")
+    if count is None:
+        selected = [stamp for stamp, _price in crypto]
+    else:
+        if count < 2:
+            raise ValueError("Replay needs at least two frames")
+        if len(crypto) < count:
+            raise ValueError("Not enough common completed daily observations for the replay frames")
+        selected = [crypto[index * (len(crypto) - 1) // (count - 1)][0] for index in range(count)]
+    if len(selected) < 2:
+        raise ValueError("Replay needs at least two frames")
     frames = []
-    for index in range(count):
-        time = crypto[index * (len(crypto) - 1) // (count - 1)][0]
+    for time in selected:
         prices, source_times = {}, {}
         for name, series in rows.items():
             available = [(stamp, price) for stamp, price in series if stamp <= time]

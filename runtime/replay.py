@@ -138,10 +138,13 @@ class PaperRuntime:
                 break
 
     def run(self, frames: list[dict], provenance: dict | None = None):
-        if len(frames) != len(SCORES["btc"]):
-            raise ValueError("The authored score tape requires exactly twelve frames")
+        score_count = len(SCORES["btc"])
+        if len(frames) < score_count:
+            raise ValueError("The authored score tape requires at least twelve frames")
         if any(set(frame["prices"]) != set(self.books) for frame in frames):
             raise ValueError("Every replay frame must contain BTC, ETH, gold, and SPYx prices")
+        decisions = {score_index * (len(frames) - 1) // (score_count - 1): score_index for score_index in range(score_count)}
+        applied_score = 0
         for index, prices in enumerate(frames):
             self.frame_id, self.time, self.prices = index, prices["time"], prices["prices"]
             for name, book in self.books.items():
@@ -153,26 +156,34 @@ class PaperRuntime:
                     book.apply("mark", Decimal(self.holdings[name]) * money(self.prices[name]) / 100_000_000, f"mark:{index}:{name}", source="token")
             total = sum(book.equity for book in self.books.values())
             before = {name: book.equity / total for name, book in self.books.items()}
-            scores = {name: money(series[index]) for name, series in SCORES.items()}
-            stopped = {name for name, series in SCORES.items() if index and money(series[index - 1]) - scores[name] > Decimal(".20")}
-            for name in stopped:
-                self.exposure(name, True)
-            result = allocate(before, scores, stopped=stopped, cooldown=self.cooldown, initial=index == 0)
-            if index:
-                self.rebalance(result.weights, before)
-            for name in self.books:
-                self.exposure(name, name in stopped)
-            self.cooldown = {name for name in before if result.weights[name] < before[name] - Decimal("1e-9")}
+            score_index = decisions.get(index)
+            if score_index is None:
+                scores = {name: money(series[applied_score]) for name, series in SCORES.items()}
+                stopped = set()
+                targets, kind, overrides, reason = before, "hold", [], "Daily close. Allocation unchanged."
+            else:
+                applied_score = score_index
+                scores = {name: money(series[score_index]) for name, series in SCORES.items()}
+                stopped = {name for name, series in SCORES.items() if score_index and money(series[score_index - 1]) - scores[name] > Decimal(".20")}
+                for name in stopped:
+                    self.exposure(name, True)
+                result = allocate(before, scores, stopped=stopped, cooldown=self.cooldown, initial=index == 0)
+                if index:
+                    self.rebalance(result.weights, before)
+                for name in self.books:
+                    self.exposure(name, name in stopped)
+                self.cooldown = {name for name in before if result.weights[name] < before[name] - Decimal("1e-9")}
+                targets, kind, overrides, reason = result.weights, result.kind, result.overrides, result.reason
             equity = sum(book.equity for book in self.books.values())
             costs = {kind: sum(book.costs[kind] for book in self.books.values()) for kind in ("execution", "network", "service", "impairment")}
             benchmark = sum(self.shadow[name] * (book.nav or Decimal(0)) for name, book in self.books.items())
             agents = {name: {"equity": str(book.equity), "weight": str(book.equity / equity), "token_raw": str(self.holdings[name]), "token_value": str(book.assets["token"]), "capital": str(book.assets["capital"]), "usdc": str(book.assets["usdc"]), "purchasing": str(book.assets["purchasing"]), "payable": str(book.payable), "units": str(book.units), "nav": str(book.nav), "net_pnl": str(book.net_pnl), "score": str(scores[name]), "stopped": name in stopped} for name, book in self.books.items()}
             objections = [{"agent": name, "type": "rule_breach" if name in stopped else "comment", "rule": "daily_stop" if name in stopped else None, "applied": name in stopped, "text": "No incoming allocation; cash target" if name in stopped else "No verified rule breach"} for name in self.books]
-            frame = {"id": index, "time": self.time, "prices": self.prices, "source_times": prices.get("source_times", {}), "scores": strings(scores), "weights_before": strings(before), "target_weights": strings(result.weights), "settled_weights": {name: row["weight"] for name, row in agents.items()}, "agents": agents, "equity": str(equity), "contributions": str(self.initial), "distributions": "0", "net_pnl": str(equity - self.initial), "gross_pnl": str(equity - self.initial + sum(costs.values())), "fees": strings(costs), "benchmark": str(benchmark), "round_kind": result.kind, "overrides": result.overrides, "reason": result.reason, "shock": sorted(stopped), "objections": objections, "trade_count": len([row for row in self.trades if row["kind"] == "trade"]), "provenance": provenance or {"source": "test fixture"}, "score_source": "Handwritten replay-only score series", "cost_assumptions": {"execution_bps": 10, "gateway_fee_usd": "0.10", "network_fee_usd": "0.04"}}
+            frame = {"id": index, "time": self.time, "prices": self.prices, "source_times": prices.get("source_times", {}), "scores": strings(scores), "weights_before": strings(before), "target_weights": strings(targets), "settled_weights": {name: row["weight"] for name, row in agents.items()}, "agents": agents, "equity": str(equity), "contributions": str(self.initial), "distributions": "0", "net_pnl": str(equity - self.initial), "gross_pnl": str(equity - self.initial + sum(costs.values())), "fees": strings(costs), "benchmark": str(benchmark), "round_kind": kind, "overrides": overrides, "reason": reason, "shock": sorted(stopped), "objections": objections, "trade_count": len([row for row in self.trades if row["kind"] == "trade"]), "provenance": provenance or {"source": "test fixture"}, "score_source": "Handwritten replay-only score series", "cost_assumptions": {"execution_bps": 10, "gateway_fee_usd": "0.10", "network_fee_usd": "0.04"}}
             self.frames.append(frame)
             if stopped:
                 name = sorted(stopped)[0]
-                self.headlines.append({"id": len(self.headlines) + 1, "frame_id": index, "agent": name, "title": "Bitcoin score shock", "text": f"Authored score {SCORES[name][index - 1]} to {SCORES[name][index]}. Cash target; incoming budget blocked.", "caption_only": True})
+                self.headlines.append({"id": len(self.headlines) + 1, "frame_id": index, "agent": name, "title": "Bitcoin score shock", "text": f"Authored score {SCORES[name][score_index - 1]} to {SCORES[name][score_index]}. Cash target; incoming budget blocked.", "caption_only": True})
         return self.frames, self.trades, self.headlines
 
 
@@ -199,7 +210,7 @@ def main():
     cache = Path(__file__).resolve().parents[1] / "data" / "replay-bars.json"
     try:
         bars = load_historical_files(args.data_dir) if args.data_dir else load_historical_cache(cache)
-        prices = price_frames(bars)
+        prices = price_frames(bars, count=None)
         frames, trades, headlines = PaperRuntime().run(prices, {key: value for key, value in bars.items() if key != "bars"})
     except (OSError, ValueError) as error:
         parser.error(str(error))
